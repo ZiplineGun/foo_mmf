@@ -1,0 +1,16 @@
+<Project>
+  <PropertyGroup>
+    <OutDir>$(MSBuildThisFileDirectory)build\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(MSBuildThisFileDirectory)build\obj\$(MSBuildProjectName)\$(Platform)\$(Configuration)\</IntDir>
+    <TargetPath>$(OutDir)$(TargetName)$(TargetExt)</TargetPath>
+    <TargetDir>$(OutDir)</TargetDir>
+    <IntDirFullPath>$(IntDir)</IntDirFullPath>
+    <DesktopDeployRecipeFile>$(IntDir)$(TargetName)$(TargetExt).recipe</DesktopDeployRecipeFile>
+  </PropertyGroup>
+  <ItemDefinitionGroup>
+    <Link>
+      <!-- Keep symbols useful without embedding the build machine's path. -->
+      <AdditionalOptions>/PDBALTPATH:$(TargetName).pdb %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+  </ItemDefinitionGroup>
+</Project>

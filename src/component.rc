@@ -1,0 +1,46 @@
+#include <windows.h>
+#include <commctrl.h>
+#include "resource.h"
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+IDD_PREFERENCES DIALOGEX 0, 0, 300, 294
+STYLE DS_SETFONT | DS_CONTROL | WS_CHILD
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT "Playback &engine:", -1, 7, 9, 90, 12
+    COMBOBOX IDC_ENGINE, 100, 7, 193, 65, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT "MA&7 folder (blank uses the MCP-MA7 installation):", -1, 7, 32, 286, 12
+    EDITTEXT IDC_FOLDER, 7, 46, 235, 14, ES_AUTOHSCROLL | WS_TABSTOP
+    PUSHBUTTON "&Browse...", IDC_BROWSE, 246, 45, 47, 16
+    LTEXT "MA&5 folder (blank uses the MidRadio Player installation):", -1, 7, 68, 286, 12
+    EDITTEXT IDC_MA5_FOLDER, 7, 82, 235, 14, ES_AUTOHSCROLL | WS_TABSTOP
+    PUSHBUTTON "B&rowse...", IDC_MA5_BROWSE, 246, 81, 47, 16
+    LTEXT "", IDC_STATUS, 7, 103, 286, 30
+    CONTROL "Enable Yamaha &reverb for MID and MIDI files", IDC_REVERB, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 7, 140, 285, 14
+    CONTROL "Enable Yamaha &chorus for MID and MIDI files", IDC_CHORUS, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 7, 158, 285, 14
+    LTEXT "Extra whole-song re&peats (0 to 254):", -1, 7, 182, 202, 12
+    EDITTEXT IDC_REPEATS, 219, 180, 55, 15, ES_NUMBER | WS_TABSTOP
+    LTEXT "Final repeat fade &duration (0 to 30 seconds):", -1, 7, 205, 202, 12
+    EDITTEXT IDC_FADE, 219, 203, 55, 15, ES_NUMBER | WS_TABSTOP
+    LTEXT "Default Yamaha &volume (0 to 127):", -1, 7, 228, 202, 12
+    EDITTEXT IDC_VOLUME, 219, 226, 55, 15, ES_NUMBER | WS_TABSTOP
+    LTEXT "Lower Yamaha volume to prevent clipping inside the synthesizer. View > SMAF control adjusts playback temporarily. Conversion uses the saved settings.", -1, 7, 254, 286, 32
+END
+IDD_CONTROLS DIALOGEX 0, 0, 260, 158
+STYLE DS_SETFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU
+EXSTYLE WS_EX_CONTROLPARENT
+CAPTION "SMAF control"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT "&Tempo (70 to 130 percent):", -1, 9, 12, 169, 13
+    EDITTEXT IDC_TEMPO, 192, 10, 57, 15, ES_NUMBER | WS_TABSTOP
+    CONTROL "Tempo", IDC_TEMPO_SPIN, UPDOWN_CLASS, UDS_ALIGNRIGHT | UDS_SETBUDDYINT | UDS_ARROWKEYS | UDS_NOTHOUSANDS, 237, 10, 12, 15
+    LTEXT "Trans&pose (-12 to +12 semitones):", -1, 9, 40, 169, 13
+    EDITTEXT IDC_TRANSPOSE, 192, 38, 57, 15, ES_AUTOHSCROLL | WS_TABSTOP
+    CONTROL "Transpose", IDC_TRANSPOSE_SPIN, UPDOWN_CLASS, UDS_ALIGNRIGHT | UDS_SETBUDDYINT | UDS_ARROWKEYS | UDS_NOTHOUSANDS, 237, 38, 12, 15
+    LTEXT "Yamaha &volume (0 to 127):", -1, 9, 68, 169, 13
+    EDITTEXT IDC_VOLUME, 192, 66, 57, 15, ES_NUMBER | WS_TABSTOP
+    CONTROL "Yamaha volume", IDC_VOLUME_SPIN, UPDOWN_CLASS, UDS_ALIGNRIGHT | UDS_SETBUDDYINT | UDS_ARROWKEYS | UDS_NOTHOUSANDS, 237, 66, 12, 15
+    LTEXT "Changes apply after a short pause in typing. Up/Down adjusts a value. Settings last until foobar2000 exits; Reset restores the saved volume and normal tempo/pitch.", -1, 9, 94, 240, 32
+    PUSHBUTTON "&Reset", IDC_RESET, 140, 134, 50, 16
+    PUSHBUTTON "&Close", IDCANCEL, 199, 134, 50, 16
+END

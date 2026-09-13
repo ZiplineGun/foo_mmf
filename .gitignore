@@ -1,0 +1,14 @@
+/MCP-MA7/
+/newer_ma5/
+/sdk/
+/test files/
+/references/
+/analysis/
+/build/
+/out/
+/.vs/
+*.user
+*.suo
+*.log
+*.wav
+*.dmp
