@@ -2,6 +2,10 @@
 
 Yamaha SMAF playback for foobar2000 2.x on Windows 10 or later. The component uses original, user-supplied Yamaha MA7 or MA5 synthesizer libraries in a separate 32-bit process.
 
+## AI Disclaimer
+
+Large Language Models were used to aid in development of this component.
+
 ## Install
 
 1. Install **`foo_mmf.fb2k-component`** through File > Preferences > Components > Install, then restart foobar. This single package includes both the x86 and x64 components; foobar selects the correct version automatically. ARM64EC foobar uses the x64 version.
@@ -20,7 +24,6 @@ The older MA5 libraries reject modern Windows version numbers. The component app
 
 - **Sample rate**, under **File > Preferences > Playback > Input > Yamaha SMAF**, selects **44,100 Hz** or **48,000 Hz**, defaulting to **48,000 Hz**. Both MA7 and both tested MA5 releases support these rates. The selected rate applies to every file when playback or conversion starts a new session. Foobar may still display a previously cached rate; use **Properties > Tools > Reload info from file(s)** on affected tracks to refresh it.
 - MMF text metadata, including title, artist, composer and copyright, appears in foobar's tags when present. Files already in the library may need **Properties > Tools > Reload info from file(s)** to refresh cached metadata. Tags are read only; source files are unchanged.
-
 - Supports supplied MA2, MA3, MA5 and MA7 samples, MLD, and standard MIDI.
 - **Default Yamaha volume**, in preferences, ranges from **0 to 127** and defaults to **64**. It controls the synthesizer before its PCM output clips. Lower it for loud songs: reducing foobar's own volume cannot repair clipping that has already occurred inside Yamaha. Some files may need a value below the default.
 - **Enable Yamaha reverb** and **Enable Yamaha chorus for MID and MIDI files** are independent preferences, both **on** by default, preserving the file's effect settings. Uncheck either to disable that effect. Changes apply when a file is next opened and also apply to conversion. MMF/MLD effects are unchanged. Disabled effect sends are suppressed in memory; source files are never edited.
@@ -28,7 +31,7 @@ The older MA5 libraries reject modern Windows version numbers. The component app
 - Tab and Shift+Tab navigate the controls. Alt+T, Alt+P and Alt+V select the fields; Alt+R resets; Enter and Escape close the window. Reset restores normal tempo/pitch and the volume currently saved in preferences. Closing also applies any pending valid edit.
 - Temporary controls apply across tracks until foobar exits. Saved preferences initialize new decoders; a temporary volume override takes precedence during playback. Conversion, integrity testing and canonical decoding use normal tempo/pitch and the saved volume. Changes become audible after foobar's existing output buffer plays out.
 - Preferences provide **0-254** extra whole-song repeats and a **0-30 second** fade over the end of the last repeated pass. Defaults are no extra repeats and a five-second repeat fade. Foobar's no-loop flag disables extra repeats.
-- Ordinary playback preserves the natural release/reverb tail until it settles, with a ten-second tail limit. The final silence used to confirm the end is discarded, removing the previous quarter-second gap when repeating dry tracks in foobar. End positions retain 10 ms rendering resolution. Metadata reports nominal song duration; audible release tails can extend playback.
+- Ordinary playback preserves the natural release/reverb tail until it settles, with a ten-second tail limit. End positions retain 10 ms rendering resolution. Metadata reports nominal song duration; audible release tails can extend playback.
 
 Playback uses Yamaha's fast native seek without restarting the helper. Native seeks restore musical position with millisecond precision; they do not reproduce the exact waveform or accumulated effect tail of an uninterrupted render. Conversion and analysis keep sample-accurate seeking by rendering skipped audio inside the helper in batches.
 
