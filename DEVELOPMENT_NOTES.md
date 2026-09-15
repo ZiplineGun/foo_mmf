@@ -73,6 +73,8 @@ Version 1.1 validation (2026-09-15):
 
 The historical intermittent PCM comparison issue described below remains open despite these passing runs.
 
+Follow-up manual testing confirmed that the track-length fix plays the loop examples correctly. Differing displayed sample rates were confirmed to be cached metadata; reloading file information corrected them. Direct MA7 renders of Dragon Quest 8 Overture, 930ca_11, Cat Dance and GuitarMan all used 48,000 Hz with normal song timing. The README settings section documents the sample-rate preference and cache refresh.
+
 The pre-release component passed packaged x86/x64 host suites, bridge suites with MA7 and both MA5 releases, controlled recovery tests and package architecture checks. Manual testing confirmed NVDA accessibility, ARM64EC playback and corrected ARM64 MA7 automatic discovery.
 
 Version 1.0 preserves those playback features and prepares the source and tooling for distribution. Yamaha libraries, SDK sources, fixtures, generated audio and local test output remain excluded from Git and packages. A broader compatibility corpus and controlled comparisons with Yamaha's players remain future work.

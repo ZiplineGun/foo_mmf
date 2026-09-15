@@ -49,6 +49,8 @@ MIDI decoding is always registered. Reverb and chorus default on and can be disa
 
 Both engines support 44,100 and 48,000 Hz synthesis. The saved sample rate defaults to 48,000 Hz and applies when a decoder is initialized; active audio keeps its current format. IPC reports the actual rate, and PCM blocks remain 10 ms. Changing rate reinitializes the engine inside its existing helper process. Exact seeks use the selected rate.
 
+Foobar can display a sample rate cached from an earlier scan. Reloading file information refreshes it; this does not indicate a per-song engine rate change. The decoder currently does not publish dynamic playback information.
+
 MMF titles, artists, composers, lyricists, arrangers, copyright and other recognized text fields are exposed as foobar metadata. Parse only bounded top-level CNTI and OPDA/Dch chunks; honor their declared text encodings. Unsupported or malformed text is omitted. Metadata reading never changes source files.
 
 After nominal song end, hold candidate silent blocks while confirming the existing 250 ms quiet-tail criterion. Discard confirmed trailing silence; if sound returns, emit the held blocks before it to retain delayed-effect timing. Preserve audible release tails, finite repeats, the ten-second tail limit and normal foobar EOF. This removes the added quarter-second gap without forcing an infinite Yamaha repeat. End positions still have the renderer's 10 ms block resolution.

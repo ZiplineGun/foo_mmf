@@ -4,27 +4,24 @@ Yamaha SMAF playback for foobar2000 2.x on Windows 10 or later. The component us
 
 ## Install
 
-1. Install **`out/foo_mmf.fb2k-component`** through File > Preferences > Components > Install, then restart foobar. This single package includes both the x86 and x64 components; foobar selects the correct version automatically. ARM64EC foobar uses the x64 version.
+1. Install **`foo_mmf.fb2k-component`** through File > Preferences > Components > Install, then restart foobar. This single package includes both the x86 and x64 components; foobar selects the correct version automatically. ARM64EC foobar uses the x64 version.
 2. Open **File > Preferences > Playback > Input > Yamaha SMAF**. Choose an engine and locate its library folder if necessary. **Automatic (prefer MA7)** is the default. Keep each Yamaha library set together, including its runtime DLLs. Yamaha binaries are not included in this component.
-3. Add `.mmf`, `.mld`, `.mid` or `.midi` files. The three decoders are always registered; there is no MIDI decoder checkbox. The MIDI reverb and chorus checkboxes control sound only.
-4. If you also have **foo_midi** or another decoder for these extensions, open **File > Preferences > Playback > Decoding** and order **Yamaha MMF decoder**, **Yamaha MLD decoder** and **Yamaha MIDI decoder** independently against competing decoders. This affects MMF as well as MIDI: foo_midi also handles MMF. Put your other decoder first when you prefer its rendering, then restart playback.
-
-An empty folder setting searches `C:\Program Files (x86)\Yamaha\MCP-MA7` on x64 or ARM64 Windows, and `C:\Program Files\Yamaha\MCP-MA7` on 32-bit Windows (using the system drive if different). ARM64EC playback and automatic discovery have been tested. If you previously selected a folder manually, clear that field to use automatic discovery.
-
-The folder needs `M7_EmuSmw7.dll`, `SMAFMMS7EMU.dll`, `M7_EmuHw.dll`, `EMOJIMGR.dll` and their original runtime dependencies. `smaf_helper.exe` must remain beside the installed `foo_mmf.dll`; the combined package handles this automatically.
-
+For **MA7**, an empty folder setting searches `C:\Program Files (x86)\Yamaha\MCP-MA7` on x64 or ARM64 Windows, and `C:\Program Files\Yamaha\MCP-MA7` on 32-bit Windows (using the system drive if different). The folder needs `M7_EmuSmw7.dll`, `SMAFMMS7EMU.dll`, `M7_EmuHw.dll`, `EMOJIMGR.dll` and their original runtime dependencies.
 For **MA5**, select **MA5 (fall back to MA7)** and use the separate MA5 folder field. An empty field uses `C:\Program Files (x86)\Yamaha\MidRadio Player` on 64-bit Windows, or `C:\Program Files\Yamaha\MidRadio Player` on 32-bit Windows. The folder needs `M5_EmuSmw5.dll`, `SMAFMMS5EMU.dll` and `M5_EmuHw.dll`; the Smaf.dll add-in is not required. Both the older MidRadio set and the supplied newer set have been tested. Select the folder containing the version you want; avoid mixing DLLs from different releases.
 
-MA5 gives some songs a different sound. If it cannot load a file, the component tries MA7 when its libraries are available. Both tested MA5 versions reject the MA7 and MLD regression fixtures and standard MIDI, so those use MA7 fallback. **Automatic** also uses MA5 when MA7 is missing or cannot open the file. Selecting **MA7** uses only MA7. File properties report the engine that actually loaded the song. Engine/path changes apply to newly opened sessions.
+3. You can start playing! The component supports `.mmf`, `.mld`, `.mid` or `.midi` files, with each format registering a separate decoder. If you also have **foo_midi** or another decoder for these extensions, open **File > Preferences > Playback > Decoding** and order **Yamaha MMF decoder**, **Yamaha MLD decoder** and **Yamaha MIDI decoder** independently against competing decoders. This affects MMF as well as MIDI: foo_midi also handles MMF. Put your other decoder first when you prefer its rendering, then restart playback. For screen reader/keyboard users, open the context menu (Shift+F10/Applications key) on a decoder in the list to find the move up/down commands.
+
+
+MA5 gives some songs a different sound because some patches differ from MA7. If you listen to a ringtone created for a device using a MA5 chip and it sounds different to how you remember, change the Playback Engine setting to "MA5." If it cannot load a file, the component tries MA7 when its libraries are available. Both tested MA5 versions reject the MA7 and MLD regression fixtures and standard MIDI, so those use MA7 fallback. **Automatic** also uses MA5 when MA7 is missing or cannot open the file. Selecting **MA7** uses only MA7. File properties report the engine that actually loaded the song. Engine/path changes apply to newly opened sessions.
 
 The older MA5 libraries reject modern Windows version numbers. The component applies Windows' version-reporting compatibility fix only to MA5 helper processes; it does not alter your system compatibility settings.
 
 ## Playback and settings
 
-- **Sample rate** selects **44,100 Hz** or **48,000 Hz**, defaulting to **48,000 Hz**. Both MA7 and both tested MA5 releases support these rates. Changes apply when playback or conversion starts a new session.
+- **Sample rate**, under **File > Preferences > Playback > Input > Yamaha SMAF**, selects **44,100 Hz** or **48,000 Hz**, defaulting to **48,000 Hz**. Both MA7 and both tested MA5 releases support these rates. The selected rate applies to every file when playback or conversion starts a new session. Foobar may still display a previously cached rate; use **Properties > Tools > Reload info from file(s)** on affected tracks to refresh it.
 - MMF text metadata, including title, artist, composer and copyright, appears in foobar's tags when present. Files already in the library may need **Properties > Tools > Reload info from file(s)** to refresh cached metadata. Tags are read only; source files are unchanged.
 
-- Supports supplied MA2, MA3, MA5 and MA7 samples, MLD, and standard MIDI. There is no claimed MA4 or MA6 support.
+- Supports supplied MA2, MA3, MA5 and MA7 samples, MLD, and standard MIDI.
 - **Default Yamaha volume**, in preferences, ranges from **0 to 127** and defaults to **64**. It controls the synthesizer before its PCM output clips. Lower it for loud songs: reducing foobar's own volume cannot repair clipping that has already occurred inside Yamaha. Some files may need a value below the default.
 - **Enable Yamaha reverb** and **Enable Yamaha chorus for MID and MIDI files** are independent preferences, both **on** by default, preserving the file's effect settings. Uncheck either to disable that effect. Changes apply when a file is next opened and also apply to conversion. MMF/MLD effects are unchanged. Disabled effect sends are suppressed in memory; source files are never edited.
 - **View > SMAF control** has labelled spin boxes for tempo (**70-130%**), transposition (**-12 to +12 semitones**) and Yamaha volume (**0-127**). Type a value or use Up/Down; valid changes apply after **350 ms** without further edits. There is no Apply button. Incomplete or out-of-range values leave the previous settings active.
