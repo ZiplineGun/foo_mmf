@@ -92,7 +92,7 @@ static std::vector<wchar_t> ma5Environment() {
     for(const auto& entry:entries) {result.insert(result.end(),entry.begin(),entry.end());result.push_back(0);}
     result.push_back(0);return result;
 }
-Bridge::Bridge(const std::wstring& executable,const std::wstring& folder,const std::vector<uint8_t>& data,unsigned repeats,unsigned fadeMs,const Check& check,int volume,bool reverb,Engine engine,bool chorus):engine_(engine) {
+Bridge::Bridge(const std::wstring& executable,const std::wstring& folder,const std::vector<uint8_t>& data,unsigned repeats,unsigned fadeMs,const Check& check,int volume,bool reverb,Engine engine,bool chorus,unsigned rate):engine_(engine) {
     try {
         beginRequest(true,LoadStage::connecting);
         if(folder.empty()||folder.size()>32767||data.empty()||data.size()>64*1024*1024) throw std::runtime_error("Invalid Yamaha input or folder");
@@ -122,20 +122,22 @@ Bridge::Bridge(const std::wstring& executable,const std::wstring& folder,const s
             }
         } catch(...) {CloseHandle(connection.hEvent);throw;}
         CloseHandle(connection.hEvent);
-        open(folder,data,repeats,fadeMs,check,volume,reverb,chorus);
+        open(folder,data,repeats,fadeMs,check,volume,reverb,chorus,rate);
     } catch(...) {close();throw;}
 }
-void Bridge::open(const std::wstring& folder,const std::vector<uint8_t>& data,unsigned repeats,unsigned fadeMs,const Check& check,int volume,bool reverb,bool chorus) {
+void Bridge::open(const std::wstring& folder,const std::vector<uint8_t>& data,unsigned repeats,unsigned fadeMs,const Check& check,int volume,bool reverb,bool chorus,unsigned rate) {
     try {
         if(folder.empty()||folder.size()>32767||data.empty()||data.size()>64*1024*1024) throw std::runtime_error("Invalid Yamaha input or folder");
-        ipc::Open request{static_cast<uint32_t>(data.size()),static_cast<uint32_t>(folder.size()),repeats,fadeMs,volume,reverb?1u:0u,static_cast<uint32_t>(engine_),chorus?1u:0u};
+        if(rate!=44100&&rate!=48000) throw std::runtime_error("Unsupported Yamaha sample rate");
+        ipc::Open request{static_cast<uint32_t>(data.size()),static_cast<uint32_t>(folder.size()),repeats,fadeMs,volume,reverb?1u:0u,static_cast<uint32_t>(engine_),chorus?1u:0u,rate};
         std::vector<uint8_t> payload(sizeof(request)+folder.size()*2+data.size());
         memcpy(payload.data(),&request,sizeof(request));memcpy(payload.data()+sizeof(request),folder.data(),folder.size()*2);
         memcpy(payload.data()+sizeof(request)+folder.size()*2,data.data(),data.size());
         auto result=transact(ipc::open,payload.data(),static_cast<uint32_t>(payload.size()),check);
         if(result.size()!=sizeof(ipc::OpenReply)) throw std::runtime_error("Invalid Yamaha open response");
         ipc::OpenReply info;memcpy(&info,result.data(),sizeof(info));
-        if(info.sampleRate!=44100||info.channels!=2||!info.lengthMs) throw std::runtime_error("Unsupported Yamaha audio format");
+        if(info.sampleRate!=rate||info.channels!=2||!info.lengthMs) throw std::runtime_error("Unsupported Yamaha audio format");
+        rate_=info.sampleRate;
         length_=info.lengthMs;
         folder_=folder;
     } catch(...) {close();throw;}
@@ -144,7 +146,7 @@ std::vector<float> Bridge::read(int tempo,int transpose,const Check& check,int v
     ipc::Read request{tempo,transpose,volume};
     try {
     auto bytes=transact(ipc::read,&request,sizeof(request),check);
-    if(bytes.size()>441*2*sizeof(float)||bytes.size()%(2*sizeof(float))) throw std::runtime_error("Invalid Yamaha audio block");
+    if(bytes.size()>rate_/100*2*sizeof(float)||bytes.size()%(2*sizeof(float))) throw std::runtime_error("Invalid Yamaha audio block");
     std::vector<float> result(bytes.size()/sizeof(float));
     if(!bytes.empty()) memcpy(result.data(),bytes.data(),bytes.size());
     return result;
@@ -159,7 +161,7 @@ std::vector<float> Bridge::discard(unsigned frames,const Check& check,int volume
     ipc::Discard request{frames,{100,0,volume}};
     try {
         auto bytes=transact(ipc::discard,&request,sizeof(request),check);
-        if(bytes.size()<sizeof(ipc::DiscardReply)||bytes.size()>sizeof(ipc::DiscardReply)+441*2*sizeof(float)||(bytes.size()-sizeof(ipc::DiscardReply))%(2*sizeof(float))) throw std::runtime_error("Invalid discard reply");
+        if(bytes.size()<sizeof(ipc::DiscardReply)||bytes.size()>sizeof(ipc::DiscardReply)+rate_/100*2*sizeof(float)||(bytes.size()-sizeof(ipc::DiscardReply))%(2*sizeof(float))) throw std::runtime_error("Invalid discard reply");
         ipc::DiscardReply reply;memcpy(&reply,bytes.data(),sizeof(reply));
         if(reply.eof>1) throw std::runtime_error("Invalid discard status");eof=reply.eof!=0;
         std::vector<float> result((bytes.size()-sizeof(reply))/sizeof(float));

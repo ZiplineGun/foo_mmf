@@ -15,12 +15,13 @@ class HelperTimeout : public std::runtime_error {public:using std::runtime_error
 class Bridge {
 public:
     using Check=std::function<void()>;
-    Bridge(const std::wstring& executable,const std::wstring& folder,const std::vector<uint8_t>& data,unsigned repeats,unsigned fadeMs,const Check& check,int volume=64,bool reverb=true,Engine engine=Engine::ma7,bool chorus=true);
+    Bridge(const std::wstring& executable,const std::wstring& folder,const std::vector<uint8_t>& data,unsigned repeats,unsigned fadeMs,const Check& check,int volume=64,bool reverb=true,Engine engine=Engine::ma7,bool chorus=true,unsigned rate=44100);
     ~Bridge();
     Bridge(const Bridge&)=delete;
     Bridge& operator=(const Bridge&)=delete;
     unsigned lengthMs() const {return length_;}
-    void open(const std::wstring& folder,const std::vector<uint8_t>& data,unsigned repeats,unsigned fadeMs,const Check& check,int volume=64,bool reverb=true,bool chorus=true);
+    unsigned rate() const {return rate_;}
+    void open(const std::wstring& folder,const std::vector<uint8_t>& data,unsigned repeats,unsigned fadeMs,const Check& check,int volume=64,bool reverb=true,bool chorus=true,unsigned rate=44100);
     std::vector<float> read(int tempo,int transpose,const Check& check,int volume=64);
     void seek(uint64_t milliseconds,const Check& check);
     std::vector<float> discard(unsigned frames,const Check& check,int volume,bool& eof);
@@ -33,6 +34,7 @@ private:
     unsigned length_{};
     std::wstring folder_;
     Engine engine_;
+    unsigned rate_=44100;
     ULONGLONG requestStarted_{},progressAt_{};
     bool opening_{};
     LoadStage stage_=LoadStage::connecting;

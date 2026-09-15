@@ -1,4 +1,4 @@
-# foo_mmf 1.0
+# foo_mmf 1.1
 
 Yamaha SMAF playback for foobar2000 2.x on Windows 10 or later. The component uses original, user-supplied Yamaha MA7 or MA5 synthesizer libraries in a separate 32-bit process.
 
@@ -21,6 +21,9 @@ The older MA5 libraries reject modern Windows version numbers. The component app
 
 ## Playback and settings
 
+- **Sample rate** selects **44,100 Hz** or **48,000 Hz**, defaulting to **48,000 Hz**. Both MA7 and both tested MA5 releases support these rates. Changes apply when playback or conversion starts a new session.
+- MMF text metadata, including title, artist, composer and copyright, appears in foobar's tags when present. Files already in the library may need **Properties > Tools > Reload info from file(s)** to refresh cached metadata. Tags are read only; source files are unchanged.
+
 - Supports supplied MA2, MA3, MA5 and MA7 samples, MLD, and standard MIDI. There is no claimed MA4 or MA6 support.
 - **Default Yamaha volume**, in preferences, ranges from **0 to 127** and defaults to **64**. It controls the synthesizer before its PCM output clips. Lower it for loud songs: reducing foobar's own volume cannot repair clipping that has already occurred inside Yamaha. Some files may need a value below the default.
 - **Enable Yamaha reverb** and **Enable Yamaha chorus for MID and MIDI files** are independent preferences, both **on** by default, preserving the file's effect settings. Uncheck either to disable that effect. Changes apply when a file is next opened and also apply to conversion. MMF/MLD effects are unchanged. Disabled effect sends are suppressed in memory; source files are never edited.
@@ -28,7 +31,7 @@ The older MA5 libraries reject modern Windows version numbers. The component app
 - Tab and Shift+Tab navigate the controls. Alt+T, Alt+P and Alt+V select the fields; Alt+R resets; Enter and Escape close the window. Reset restores normal tempo/pitch and the volume currently saved in preferences. Closing also applies any pending valid edit.
 - Temporary controls apply across tracks until foobar exits. Saved preferences initialize new decoders; a temporary volume override takes precedence during playback. Conversion, integrity testing and canonical decoding use normal tempo/pitch and the saved volume. Changes become audible after foobar's existing output buffer plays out.
 - Preferences provide **0-254** extra whole-song repeats and a **0-30 second** fade over the end of the last repeated pass. Defaults are no extra repeats and a five-second repeat fade. Foobar's no-loop flag disables extra repeats.
-- Ordinary playback preserves the natural release/reverb tail until it settles, with a ten-second tail limit. Metadata reports nominal song duration; release tails can extend playback slightly.
+- Ordinary playback preserves the natural release/reverb tail until it settles, with a ten-second tail limit. The final silence used to confirm the end is discarded, removing the previous quarter-second gap when repeating dry tracks in foobar. End positions retain 10 ms rendering resolution. Metadata reports nominal song duration; audible release tails can extend playback.
 
 Playback uses Yamaha's fast native seek without restarting the helper. Native seeks restore musical position with millisecond precision; they do not reproduce the exact waveform or accumulated effect tail of an uninterrupted render. Conversion and analysis keep sample-accurate seeking by rendering skipped audio inside the helper in batches.
 
@@ -56,13 +59,13 @@ The package layout follows the [foobar component packaging specification](https:
 build\Win32\Release\smaf_probe.exe library-folder song.mmf output.wav
 ```
 
-Optional probe arguments, in order, are tempo, semitones, extra repeats, volume, seek position in milliseconds, MIDI reverb (0/1), engine (5/7), and MIDI chorus (0/1). Volume defaults to 64, both effects to on and engine to 7. For the older MA5 set, launch the probe with the process-local environment variable `__COMPAT_LAYER=WinXPSP2VersionLie`; the component's bridge handles this automatically.
+Optional probe arguments, in order, are tempo, semitones, extra repeats, volume, seek position in milliseconds, MIDI reverb (0/1), engine (5/7), MIDI chorus (0/1), and sample rate (44100/48000). The probe defaults to volume 64, both effects on, engine 7 and 44100 Hz. For the older MA5 set, launch the probe with the process-local environment variable `__COMPAT_LAYER=WinXPSP2VersionLie`; the component's bridge handles this automatically.
 
 Pass two additional absolute folder arguments (older MA5, newer MA5) to `bridge_tests.exe` to run both MA5 suites. The real-host suite expects the newer set under `newer_ma5/` and the older set at the default MidRadio installation path.
 
 To measure library loading without foobar or IPC, run `smaf_probe.exe DLL-folder --benchmark input.mmf 5` (use 7 for MA7). It reports initialization, the first open and five warm opens. Each warm open resets song/chip state while retaining the process and DLLs. Older MA5 libraries can load more slowly than newer releases. Foobar buffering and helper launch time are additional.
 
-Bridge tests cover both client architectures, hot file switching, exact/native seeks, clipping, MIDI effects, concurrent sessions, controls, cancellation, malformed input, missing libraries and helper crashes. The named fixtures expected by these optional tests are listed in the test sources and are not redistributed. Build `foo_mmf_tests.vcxproj` and use `tools/Host-Test.ps1 -Package -Foobar path-to-foobar` to test packaged binaries in a disposable portable foobar copy, including native keyboard controls and MSAA labels. Never install the test component into your normal profile. See [DEVELOPMENT.md](DEVELOPMENT.md) and [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md) for contributor instructions.
+Bridge tests cover both client architectures, hot file switching, exact/native seeks, clipping, MIDI effects, concurrent sessions, controls, cancellation, malformed input, missing libraries and helper crashes. Build `metadata_tests.vcxproj` to test the metadata reader without Yamaha DLLs; pass an optional MMF folder to check your fixtures. Use `tools/Host-Test.ps1 -Package -Features` for metadata, both sample rates and the loop regression cases in foobar. The named fixtures expected by these optional tests are listed in the test sources and are not redistributed. Build `foo_mmf_tests.vcxproj` and use `tools/Host-Test.ps1 -Package -Foobar path-to-foobar` to test packaged binaries in a disposable portable foobar copy, including native keyboard controls and MSAA labels. Never install the test component into your normal profile. See [DEVELOPMENT.md](DEVELOPMENT.md) and [DEVELOPMENT_NOTES.md](DEVELOPMENT_NOTES.md) for contributor instructions.
 
 Use `tools/Host-Test.ps1 -Package -Recovery` for controlled MA5 stalls: the test suspends only its own helpers and checks fresh retry, repeated-stall fallback, missing MA7, console messages and cancellation. Build `load_stress.vcxproj` for Win32, then run `load_stress.exe helper DLL-folder song-folder passes` with absolute paths. It accepts your own MMF files, repeatedly opens them in shuffled order, logs timing and discards stalled workers before continuing.
 

@@ -9,7 +9,7 @@
 #include <string>
 #include "engine.hpp"
 namespace smaf {
-struct Settings {std::wstring folder,ma5Folder;Engine engine=Engine::automatic; bool reverb=true,chorus=true;unsigned repeats=0,fadeMs=5000;int volume=64;};
+struct Settings {std::wstring folder,ma5Folder;Engine engine=Engine::automatic; bool reverb=true,chorus=true;unsigned repeats=0,fadeMs=5000,sampleRate=48000;int volume=64;};
 Settings settings();
 std::wstring defaultFolder();
 std::wstring defaultMa5Folder();

@@ -24,7 +24,8 @@ template<typename T> T Yamaha::mmsApi(const char* name) const {
 template<typename T> T Yamaha::melodyApi(const char* name) const {
     return engine_==Engine::ma5?mmsApi<T>((std::string("SmafMms_")+name).c_str()):api<T>((std::string("Mapi_Melody_")+name).c_str());
 }
-Yamaha::Yamaha(const std::wstring& directory,Engine engine,Progress progress):engine_(engine),progress_(std::move(progress)) {
+Yamaha::Yamaha(const std::wstring& directory,Engine engine,Progress progress,unsigned rate):engine_(engine),rate_(rate),frames_(rate/100),progress_(std::move(progress)) {
+    if(rate!=44100&&rate!=48000) throw std::runtime_error("Unsupported Yamaha sample rate");
     this->progress(LoadStage::libraries);
     static_assert(sizeof(void*)==4,"Yamaha is an x86 engine");
     SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX);
@@ -43,7 +44,7 @@ void Yamaha::initialize() {
     progress(LoadStage::initialize);
     // 72-byte offline emulator configuration.
     std::array<uint32_t,18> config{};
-    config[0]=2; config[1]=sampleRate; config[2]=0; config[3]=0;
+    config[0]=2; config[1]=rate_; config[2]=0; config[3]=0;
     config[4]=15; config[5]=config[6]=1;
     const uint16_t dimensions[]={120,120,120,120,480,640,480,640,12,12,12,12,16,16,24,24};
     std::copy(std::begin(dimensions),std::end(dimensions),reinterpret_cast<uint16_t*>(&config[7]));
@@ -136,6 +137,7 @@ void Yamaha::controls(int tempo,int transpose,int volume) {
     tempo_=tempo; transpose_=transpose; volume_=volume;
 }
 void Yamaha::seek(uint64_t milliseconds) {
+    heldTail_.clear();readyAudio_.clear();
     if(milliseconds>=uint64_t(length_)*(repeats_+1)) {finished_=true;return;}
     int stopped=melodyApi<One>("Stop")(handle_);
     if(stopped!=-8) checked("SeekStop",stopped);started_=false;
@@ -150,21 +152,42 @@ void Yamaha::seek(uint64_t milliseconds) {
 }
 int Yamaha::positionMs() {return checked("Position",songControl(0x1111002b,nullptr));}
 unsigned Yamaha::read(float* interleaved) {
+    for(;;) {
+        if(!readyAudio_.empty()) {
+            auto block=std::move(readyAudio_.front());readyAudio_.pop_front();
+            std::copy(block.begin(),block.end(),interleaved);return static_cast<unsigned>(block.size()/2);
+        }
+        if(finished_) {heldTail_.clear();return 0;}
+        unsigned count=render(interleaved);
+        if(!count) return 0;
+        if(!quietBlock_&&heldTail_.empty()) return count;
+        std::vector<float> block(interleaved,interleaved+count*2);
+        if(quietBlock_) {
+            // Confirm a settled tail before discarding it. If sound returns,
+            // replay the held silence so delayed effects keep their timing.
+            heldTail_.push_back(std::move(block));
+            continue;
+        }
+        readyAudio_.swap(heldTail_);readyAudio_.push_back(std::move(block));
+    }
+}
+unsigned Yamaha::render(float* interleaved) {
     if(finished_) return 0;
-    std::array<int32_t,blockFrames> left{},right{};
+    quietBlock_=false;
+    std::array<int32_t,maxBlockFrames> left{},right{};
     int32_t* planes[8]={left.data(),right.data()};
     if(engine_==Engine::ma5) {
-        std::array<int16_t,blockFrames> l{},r{};
-        api<void(__cdecl*)(int16_t*,int16_t*,unsigned)>("MaSound_Generate")(l.data(),r.data(),blockFrames);
+        std::array<int16_t,maxBlockFrames> l{},r{};
+        api<void(__cdecl*)(int16_t*,int16_t*,unsigned)>("MaSound_Generate")(l.data(),r.data(),frames_);
         std::copy(l.begin(),l.end(),left.begin());std::copy(r.begin(),r.end(),right.begin());
-    } else checked("Generate",generate_(planes,blockFrames));
+    } else checked("Generate",generate_(planes,frames_));
     int position;
     if(engine_==Engine::ma5) {
         // The 2004 MMS dispatcher polls a worker thread. Querying it for every
         // 10-ms audio block is slower than real time. Interpolate between polls;
         // always confirm the actual position near EOF before ending/repeating.
         if(!ending_) {
-            ma5Position_+=double(blockFrames)*1000/sampleRate*tempo_/100;
+            ma5Position_+=double(frames_)*1000/rate_*tempo_/100;
             if(++ma5PollBlocks_>=10||ma5Position_>=length_-1) {ma5Position_=positionMs();ma5PollBlocks_=0;}
         }
         position=static_cast<int>(ma5Position_);
@@ -172,7 +195,7 @@ unsigned Yamaha::read(float* interleaved) {
     // MA5's millisecond position saturates at length - 1 (both library versions).
     if(position>=static_cast<int>(length_)-(engine_==Engine::ma5?1:0)) ending_=true;
     int peak=0;
-    for(unsigned i=0;i<blockFrames;++i) {
+    for(unsigned i=0;i<frames_;++i) {
         const int l=std::clamp(left[i],-32768,32767), r=std::clamp(right[i],-32768,32767);
         peak=std::max({peak,std::abs(l),std::abs(r)});
         float gain=1.0f;
@@ -188,21 +211,23 @@ unsigned Yamaha::read(float* interleaved) {
             controls(tempo_,transpose_,volume_);
             checked("RepeatStart",melodyApi<One>("Start")(handle_));
             ma5Position_=0;ma5PollBlocks_=0;
-            --repeatsLeft_; ending_=false; return blockFrames;
+            --repeatsLeft_; ending_=false; return frames_;
         }
-        tailFrames_+=blockFrames;
+        tailFrames_+=frames_;
         // The emulator can retain a small constant DC offset after its reverb ends.
         // Detect a settled tail without altering the rendered Yamaha samples.
-        const auto leftRange=std::minmax_element(left.begin(),left.end());
-        const auto rightRange=std::minmax_element(right.begin(),right.end());
+        const auto leftRange=std::minmax_element(left.begin(),left.begin()+frames_);
+        const auto rightRange=std::minmax_element(right.begin(),right.begin()+frames_);
         const bool quiet=peak<=64&&*leftRange.second-*leftRange.first<=2&&*rightRange.second-*rightRange.first<=2;
-        quietFrames_=quiet ? quietFrames_+blockFrames : 0;
-        finished_=quietFrames_>=sampleRate/4 || tailFrames_>=sampleRate*10;
+        quietBlock_=quiet&&!(repeats_&&fadeMs_);
+        quietFrames_=quiet ? quietFrames_+frames_ : 0;
+        finished_=quietFrames_>=rate_/4 || tailFrames_>=rate_*10;
         if(repeats_&&fadeMs_) finished_=true;
     }
-    return blockFrames;
+    return frames_;
 }
 void Yamaha::closeSong() {
+    heldTail_.clear();readyAudio_.clear();
     if(started_) {int result=melodyApi<One>("Stop")(handle_);if(result!=-8) checked("Stop",result);started_=false;}
     if(opened_) {checked("Close",melodyApi<One>("Close")(handle_));opened_=false;}
     if(handle_) {checked("Unload",melodyApi<One>("Unload")(handle_));handle_=0;}

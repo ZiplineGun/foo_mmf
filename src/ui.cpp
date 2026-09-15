@@ -10,6 +10,7 @@ namespace smaf {
 static cfg_string folderSetting({0x927e5cca,0x8d30,0x4825,{0x80,0x19,0x69,0x0a,0x92,0x1a,0xfa,0x23}},"");
 static cfg_string ma5FolderSetting({0x261427d4,0xe61e,0x4e6d,{0xb3,0x36,0x66,0x8c,0x84,0x83,0x35,0x1f}},"");
 static cfg_uint engineSetting({0x5c95eda1,0xffaa,0x4d02,{0xb5,0xa7,0xd6,0x16,0x8b,0x76,0xe0,0xd5}},0);
+static cfg_uint sampleRateSetting({0x137f8e4b,0xb648,0x4311,{0x81,0x35,0xc4,0xd6,0x0a,0xd9,0xdb,0x21}},48000);
 static cfg_bool chorusSetting({0x646d36dc,0x8a1a,0x46e2,{0xa1,0x22,0xe9,0x24,0xc0,0xf1,0xce,0x80}},true);
 static cfg_bool reverbSetting({0x92712d17,0x8d22,0x4875,{0xa3,0x21,0x58,0xf0,0x90,0x37,0x62,0x13}},true);
 static cfg_uint volumeSetting({0x8655d5ad,0x1460,0x4079,{0xb4,0x93,0xf4,0x13,0x54,0x40,0x6b,0xcc}},64);
@@ -36,6 +37,7 @@ Settings settings() {
     auto ma5Folder=ma5FolderSetting.get();
     result.ma5Folder=ma5Folder.is_empty()?defaultMa5Folder():std::wstring(pfc::stringcvt::string_wide_from_utf8(ma5Folder));
     auto engine=engineSetting.get();result.engine=engine==5?Engine::ma5:engine==7?Engine::ma7:Engine::automatic;
+    result.sampleRate=sampleRateSetting.get()==44100?44100:48000;
     result.reverb=reverbSetting.get();result.chorus=chorusSetting.get();result.volume=static_cast<int>(std::clamp<int64_t>(volumeSetting.get(),0,127));
     result.repeats=static_cast<unsigned>(std::clamp<int64_t>(repeatsSetting.get(),0,254));
     result.fadeMs=static_cast<unsigned>(std::clamp<int64_t>(fadeSetting.get(),0,30))*1000;
@@ -85,6 +87,7 @@ class Preferences : public preferences_page_instance {
         SetDlgItemTextW(window_,IDC_MA5_FOLDER,pfc::stringcvt::string_wide_from_utf8(ma5Folder));
         auto engine=defaults?0:engineSetting.get();
         SendDlgItemMessageW(window_,IDC_ENGINE,CB_SETCURSEL,engine==5?1:engine==7?2:0,0);
+        SendDlgItemMessageW(window_,IDC_SAMPLE_RATE,CB_SETCURSEL,!defaults&&sampleRateSetting.get()==44100?0:1,0);
         CheckDlgButton(window_,IDC_REVERB,defaults||reverbSetting.get()?BST_CHECKED:BST_UNCHECKED);
         CheckDlgButton(window_,IDC_CHORUS,defaults||chorusSetting.get()?BST_CHECKED:BST_UNCHECKED);
         setNumber(window_,IDC_VOLUME,defaults?64:static_cast<int>(volumeSetting.get()));
@@ -113,13 +116,14 @@ class Preferences : public preferences_page_instance {
         if(message==WM_INITDIALOG) {
             self=reinterpret_cast<Preferences*>(lp);self->window_=window;SetWindowLongPtrW(window,DWLP_USER,lp);
             for(auto label:{L"Automatic (prefer MA7)",L"MA5 (fall back to MA7)",L"MA7"}) SendDlgItemMessageW(window,IDC_ENGINE,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(label));
+            for(auto label:{L"44,100 Hz",L"48,000 Hz"}) SendDlgItemMessageW(window,IDC_SAMPLE_RATE,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(label));
             self->populate(false);return TRUE;
         }
         if(!self) return FALSE;
         if(message==WM_DESTROY) {self->window_=nullptr;return TRUE;}
         if(message==WM_COMMAND) {
             if(LOWORD(wp)==IDC_BROWSE||LOWORD(wp)==IDC_MA5_BROWSE) {self->browse(LOWORD(wp)==IDC_MA5_BROWSE);return TRUE;}
-            if(!self->loading_&&(HIWORD(wp)==EN_CHANGE||(LOWORD(wp)==IDC_ENGINE&&HIWORD(wp)==CBN_SELCHANGE)||LOWORD(wp)==IDC_REVERB||LOWORD(wp)==IDC_CHORUS)) {
+            if(!self->loading_&&(HIWORD(wp)==EN_CHANGE||((LOWORD(wp)==IDC_ENGINE||LOWORD(wp)==IDC_SAMPLE_RATE)&&HIWORD(wp)==CBN_SELCHANGE)||LOWORD(wp)==IDC_REVERB||LOWORD(wp)==IDC_CHORUS)) {
                 self->dirty_=true;if(LOWORD(wp)==IDC_FOLDER||LOWORD(wp)==IDC_MA5_FOLDER) self->status();self->callback_->on_state_changed();return TRUE;
             }
         }
@@ -147,6 +151,7 @@ public:
             chorusSetting=IsDlgButtonChecked(window_,IDC_CHORUS)==BST_CHECKED;
             ma5FolderSetting=pfc::stringcvt::string_utf8_from_wide(ma5Folder.c_str());
             auto selection=SendDlgItemMessageW(window_,IDC_ENGINE,CB_GETCURSEL,0,0);engineSetting=selection==1?5:selection==2?7:0;
+            sampleRateSetting=SendDlgItemMessageW(window_,IDC_SAMPLE_RATE,CB_GETCURSEL,0,0)==0?44100:48000;
             repeatsSetting=repeats;fadeSetting=fade;volumeSetting=volume;
         }
         dirty_=false;callback_->on_state_changed();

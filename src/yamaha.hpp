@@ -8,17 +8,19 @@
 #include "engine.hpp"
 #include "loading.hpp"
 #include <functional>
+#include <deque>
 
 namespace smaf {
 constexpr uint32_t sampleRate = 44100;
 constexpr uint32_t blockFrames = 441;
+constexpr uint32_t maxBlockFrames = 480;
 constexpr uint32_t maxFileBytes = 64 * 1024 * 1024;
 
 // This class belongs exclusively to an x86 helper process. Yamaha keeps global state.
 class Yamaha {
 public:
     using Progress=std::function<void(LoadStage)>;
-    explicit Yamaha(const std::wstring& directory,Engine engine=Engine::ma7,Progress progress={});
+    explicit Yamaha(const std::wstring& directory,Engine engine=Engine::ma7,Progress progress={},unsigned rate=sampleRate);
     ~Yamaha();
     Yamaha(const Yamaha&) = delete;
     Yamaha& operator=(const Yamaha&) = delete;
@@ -28,6 +30,8 @@ public:
     void closeSong();
     unsigned read(float* interleaved);
     unsigned lengthMs() const { return length_; }
+    unsigned rate() const {return rate_;}
+    unsigned blockSize() const {return frames_;}
     int positionMs();
 private:
     using Call = int(__cdecl*)();
@@ -35,6 +39,7 @@ private:
     using Control = int(__cdecl*)(int,unsigned,void*);
     HMODULE module_{};
     Engine engine_;
+    unsigned rate_,frames_;
     Progress progress_;
     void progress(LoadStage stage){if(progress_) progress_(stage);}
     HMODULE mms_{}, hardware_{};
@@ -45,6 +50,8 @@ private:
     unsigned repeatsLeft_{};
     int tempo_=100, transpose_=0, volume_=127;
     bool ending_{}, finished_{};
+    bool quietBlock_{};
+    std::deque<std::vector<float>> heldTail_,readyAudio_;
     double ma5Position_{};
     unsigned ma5PollBlocks_{};
     std::vector<uint8_t> data_;
@@ -58,6 +65,7 @@ private:
     void close() noexcept;
     void resetDevice();
     void initialize();
+    unsigned render(float* interleaved);
 };
 std::vector<uint8_t> readFile(const wchar_t* path);
 }

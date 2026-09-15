@@ -30,6 +30,7 @@ static void requirePcmEqual(const std::vector<audio_sample>& actual,const std::v
 }
 static std::wstring environment(const wchar_t* name){wchar_t value[32768];DWORD count=GetEnvironmentVariableW(name,value,32768);require(count&&count<32768,"Missing test environment");return value;}
 static input_entry::ptr decoderEntry, mldEntry, midiEntry;
+static unsigned expectedRate=44100;
 static void pump(unsigned milliseconds);
 static void clearConsole(){console::clearBacklog();}
 static unsigned countConsole(const char* text) {
@@ -61,7 +62,7 @@ static input_decoder::ptr openDecoder(const std::wstring& path,unsigned flags) {
 static std::vector<audio_sample> collect(input_decoder::ptr decoder,size_t frames) {
     std::vector<audio_sample> result;audio_chunk_impl chunk;
     while(result.size()<frames*2&&decoder->run(chunk,fb2k::noAbort)) {
-        require(chunk.get_sample_rate()==44100&&chunk.get_channels()==2,"Wrong host PCM format");
+        require(chunk.get_sample_rate()==expectedRate&&chunk.get_channels()==2,"Wrong host PCM format");
         result.insert(result.end(),chunk.get_data(),chunk.get_data()+chunk.get_used_size());
     }
     return result;
@@ -128,6 +129,58 @@ static void recoveryTests(const std::wstring& root,preferences_page_instance::pt
     log("PASS cancellation promptly discards frozen helper without retry or fallback");
     instance->reset();instance->apply();
 }
+static void featureTests(const std::wstring& root,preferences_page_instance::ptr instance) {
+    HWND prefs=instance->get_wnd();accessibleName(prefs,IDC_SAMPLE_RATE,L"Sample rate");
+    instance->reset();
+    require(SendDlgItemMessageW(prefs,IDC_SAMPLE_RATE,CB_GETCURSEL,0,0)==1,"Sample rate default is not 48 kHz");
+    HWND rateControl=GetDlgItem(prefs,IDC_SAMPLE_RATE);
+    SetFocus(rateControl);SendMessageW(rateControl,WM_KEYDOWN,VK_UP,0);SendMessageW(rateControl,WM_KEYUP,VK_UP,0);
+    require(SendMessageW(rateControl,CB_GETCURSEL,0,0)==0,"Sample rate cannot be changed with the keyboard");
+    require(GetNextDlgTabItem(prefs,rateControl,FALSE)==GetDlgItem(prefs,IDC_REVERB),"Sample rate tab order is incorrect");
+    RECT previous{},current{};GetWindowRect(rateControl,&previous);
+    for(int id:{IDC_REVERB,IDC_CHORUS,IDC_REPEATS,IDC_FADE,IDC_VOLUME}) {
+        GetWindowRect(GetDlgItem(prefs,id),&current);require(current.top>=previous.bottom,"Preferences controls overlap");previous=current;
+    }
+    SetDlgItemTextW(prefs,IDC_FOLDER,(root+L"\\MCP-MA7").c_str());
+    SetDlgItemTextW(prefs,IDC_MA5_FOLDER,(root+L"\\newer_ma5").c_str());instance->apply();
+    const auto song=root+L"\\test files\\meta\\GuitarMan.mmf";
+    for(int engine:{2,1}) for(int rateIndex:{1,0}) {
+        SendDlgItemMessageW(prefs,IDC_ENGINE,CB_SETCURSEL,engine,0);
+        SendDlgItemMessageW(prefs,IDC_SAMPLE_RATE,CB_SETCURSEL,rateIndex,0);
+        SendMessageW(prefs,WM_COMMAND,MAKEWPARAM(IDC_SAMPLE_RATE,CBN_SELCHANGE),reinterpret_cast<LPARAM>(GetDlgItem(prefs,IDC_SAMPLE_RATE)));
+        require((instance->get_state()&preferences_state::changed)!=0,"Sample rate change did not mark preferences dirty");
+        instance->apply();expectedRate=rateIndex?48000:44100;
+        auto decoder=openDecoder(song,0);file_info_impl info;decoder->get_info(0,info,fb2k::noAbort);
+        require(info.meta_get("TITLE",0)&&!strcmp(info.meta_get("TITLE",0),"Guitar Man"),"MMF title missing from host metadata");
+        require(info.meta_get("COPYRIGHT",0)&&strstr(info.meta_get("COPYRIGHT",0),"Yamaha Corporation"),"MMF copyright missing from host metadata");
+        require(info.info_get_int("samplerate")==expectedRate,"Metadata reports wrong rate");
+        auto original=collect(decoder,expectedRate*3);
+        decoder->seek(1.234,fb2k::noAbort);auto sought=collect(decoder,expectedRate/10);
+        size_t offset=static_cast<size_t>(audio_math::time_to_samples(1.234,expectedRate))*2;
+        require(std::equal(sought.begin(),sought.end(),original.begin()+offset),"Selected-rate conversion seek not sample exact");
+        decoder.release();
+        auto playback=openDecoder(song,input_flag_playback);playback->seek(20,fb2k::noAbort);require(!collect(playback,expectedRate/10).empty(),"Selected-rate native seek failed");
+    }
+    log("PASS MMF title/copyright in foobar and MA7/MA5 playback/conversion/native/exact seeks at both rates");
+    auto active=openDecoder(song,0); // MA5 at 44.1 kHz after the loop above.
+    SendDlgItemMessageW(prefs,IDC_SAMPLE_RATE,CB_SETCURSEL,1,0);instance->apply();
+    require(!collect(active,4410).empty(),"Preference change interrupted the active format");
+    active->initialize(0,0,fb2k::noAbort);expectedRate=48000;
+    require(!collect(active,4800).empty(),"Reinitialized decoder ignored the new sample rate");active.release();
+    log("PASS sample rate keyboard navigation, layout and session reinitialization");
+    SendDlgItemMessageW(prefs,IDC_ENGINE,CB_SETCURSEL,2,0);
+    SendDlgItemMessageW(prefs,IDC_SAMPLE_RATE,CB_SETCURSEL,1,0);instance->apply();expectedRate=48000;
+    for(auto name:{L"GuitarMan.mmf",L"Cat dance.mmf",L"MarsMine.mmf"}) {
+        auto path=root+L"\\test files\\"+name;
+        for(unsigned pass=0;pass<2;++pass) {
+            auto decoder=openDecoder(path,input_flag_playback);file_info_impl info;decoder->get_info(0,info,fb2k::noAbort);
+            auto pcm=collect(decoder,expectedRate*60);
+            require(std::abs(double(pcm.size()/2)/expectedRate-info.get_length())<0.011,"Loop example retains appended silence");
+        }
+    }
+    log("PASS consecutive host decodes of all three loop examples have no 250 ms tail gap");
+    instance->reset();instance->apply();expectedRate=44100;
+}
 static void runTests() {
     std::wstring root;
     try {
@@ -143,6 +196,7 @@ static void runTests() {
         require(decodingPage,"Documented Playback > Decoding preference path not found");
         auto instance=page->instantiate(core_api::get_main_window(),fb2k::service_new<Callback>());HWND prefs=instance->get_wnd();
         SetDlgItemTextW(prefs,IDC_FOLDER,(root+L"\\MCP-MA7").c_str());
+        SendDlgItemMessageW(prefs,IDC_SAMPLE_RATE,CB_SETCURSEL,0,0);
         SendDlgItemMessageW(prefs,IDC_ENGINE,CB_SETCURSEL,0,0);
         CheckDlgButton(prefs,IDC_REVERB,BST_CHECKED);SetDlgItemTextW(prefs,IDC_VOLUME,L"64");SetDlgItemTextW(prefs,IDC_REPEATS,L"0");SetDlgItemTextW(prefs,IDC_FADE,L"5");instance->apply();
         accessibleName(prefs,IDC_FOLDER,L"folder");accessibleName(prefs,IDC_REPEATS,L"repeats");
@@ -160,6 +214,10 @@ static void runTests() {
         require(midiEntry->is_our_path("tone.mid","mid")&&midiEntry->is_our_path("tone.midi","midi"),"MIDI must always be registered");
         accessibleName(prefs,IDC_VOLUME,L"volume");
         log("PASS preferences, accessible labels and always-on MIDI");
+        if(GetEnvironmentVariableW(L"FOO_MMF_TEST_FEATURES",nullptr,0)) {
+            featureTests(root,instance);DestroyWindow(prefs);instance.release();decoderEntry.release();mldEntry.release();midiEntry.release();
+            log("PASS ALL HOST TESTS");fclose(logFile);logFile=nullptr;standard_commands::main_exit();return;
+        }
         if(GetEnvironmentVariableW(L"FOO_MMF_TEST_RECOVERY",nullptr,0)) {
             recoveryTests(root,instance);DestroyWindow(prefs);instance.release();decoderEntry.release();mldEntry.release();midiEntry.release();
             log("PASS ALL HOST TESTS");fclose(logFile);logFile=nullptr;standard_commands::main_exit();return;

@@ -23,5 +23,7 @@ Read DEVELOPMENT.md and DEVELOPMENT_NOTES.md before changes. Keep both current w
 - MIDI decoding stays registered; reverb and chorus are independent preferences enabled by default. Suppress disabled sends in an in-memory SMF copy, including after resets. Preserve source files and MMF/MLD effects.
 - Saved Yamaha volume spans 0..127, default 64. Temporary playback controls never affect conversion or integrity testing.
 - Preserve native playback seeks, exact reconstruction for conversion, cancellation, repeat state and EOF. Confirm MA5 position near EOF while amortizing position calls.
+- Support 44,100 and 48,000 Hz with a 48,000 Hz component default. Keep PCM blocks at 10 ms, report the actual rate over IPC and use it for exact seeks. Validate both rates with both engines.
+- Parse metadata within declared SMAF chunk bounds and encodings; omit unsupported text and preserve source files. Hold candidate end silence until confirmed, preserving delayed effects and clearing queued audio on seeks/opens.
 - Tempo stays within 70..130 percent and transpose within -12..12 semitones. Keep controls keyboard-navigable and labelled for screen readers.
 - Commit completed, checked milestones. Do not claim runtime or audio compatibility based only on compilation.

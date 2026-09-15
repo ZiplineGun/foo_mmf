@@ -1,11 +1,12 @@
 #include "component.hpp"
 #include "bridge.hpp"
+#include "metadata.hpp"
 #include <algorithm>
 #include <cstring>
 #include <memory>
 #include <mutex>
 
-DECLARE_COMPONENT_VERSION("Yamaha SMAF decoder","1.0","SMAF MA2/MA3/MA5/MA7, MLD and MIDI playback using user-supplied Yamaha MA7 or MA5 libraries.\nYamaha libraries run in an isolated x86 helper process.");
+DECLARE_COMPONENT_VERSION("Yamaha SMAF decoder","1.1","SMAF MA2/MA3/MA5/MA7, MLD and MIDI playback using user-supplied Yamaha MA7 or MA5 libraries.\nYamaha libraries run in an isolated x86 helper process.");
 VALIDATE_COMPONENT_FILENAME("foo_mmf.dll");
 
 namespace {
@@ -47,9 +48,11 @@ enum class Format {mmf,mld,midi};
 template<Format format> class input_smaf : public input_stubs {
     file::ptr file_;
     std::vector<uint8_t> data_;
+    smaf::Metadata metadata_;
     std::unique_ptr<smaf::Bridge> bridge_;
     smaf::Settings settings_;
     unsigned length_{};
+    unsigned sampleRate_=48000;
     unsigned decodeRepeats_{};
     unsigned loadedRepeats_{};
     bool playback_{};
@@ -64,8 +67,8 @@ template<Format format> class input_smaf : public input_stubs {
         if(!bridge_) bridge_=acquire(folder,engine);
         for(unsigned attempt=0;;++attempt) {
             try {
-                if(bridge_) bridge_->open(folder,data_,repeats,settings_.fadeMs,[&]{abort.check();},settings_.volume,settings_.reverb,settings_.chorus);
-                else bridge_=std::make_unique<smaf::Bridge>(helperPath(),folder,data_,repeats,settings_.fadeMs,[&]{abort.check();},settings_.volume,settings_.reverb,engine,settings_.chorus);
+                if(bridge_) bridge_->open(folder,data_,repeats,settings_.fadeMs,[&]{abort.check();},settings_.volume,settings_.reverb,settings_.chorus,settings_.sampleRate);
+                else bridge_=std::make_unique<smaf::Bridge>(helperPath(),folder,data_,repeats,settings_.fadeMs,[&]{abort.check();},settings_.volume,settings_.reverb,engine,settings_.chorus,settings_.sampleRate);
                 if(attempt) console::printf("foo_mmf: MA5 retry succeeded for \"%s\".",path_.c_str());
                 break;
             } catch(const smaf::HelperTimeout& e) {
@@ -103,6 +106,7 @@ template<Format format> class input_smaf : public input_stubs {
         catch(const exception_aborted&) {bridge_.reset();throw;}
         catch(const std::exception& e) {bridge_.reset();throw exception_io_data(e.what());}
         length_=bridge_->lengthMs();
+        sampleRate_=bridge_->rate();
         loadedRepeats_=repeats;
         pristine_=true;
     }
@@ -130,13 +134,15 @@ public:
         else if(!memcmp(data_.data(),"MThd",4)) codec_="MIDI";
         else throw exception_io_data("Unrecognized SMAF, MLD or MIDI header");
         if((format==Format::mmf&&strcmp(codec_,"SMAF"))||(format==Format::mld&&strcmp(codec_,"MLD"))||(format==Format::midi&&strcmp(codec_,"MIDI"))) throw exception_io_unsupported_format();
+        metadata_=smaf::readMetadata(data_);
         settings_=smaf::settings();start(abort,0);
         if(reason==input_open_info_read) recycle(bridge_);
     }
     void get_info(file_info& info,abort_callback&) {
+        for(const auto& entry:metadata_) info.meta_set(entry.first.c_str(),entry.second.c_str());
         info.set_length(double(length_)*(settings_.repeats+1)/1000.0);
         info.info_set("codec",codec_);info.info_set("synthesizer",actualEngine_==smaf::Engine::ma5?"Yamaha MA5":"Yamaha MCP-MA7");
-        info.info_set("encoding","synthesized");info.info_set_int("samplerate",44100);
+        info.info_set("encoding","synthesized");info.info_set_int("samplerate",sampleRate_);
         info.info_set_int("channels",2);info.info_set_int("bitspersample",16);
     }
     t_filestats get_file_stats(abort_callback& abort){return file_->get_stats(abort);}
@@ -145,12 +151,12 @@ public:
         playback_=(flags&input_flag_playback)!=0&&(flags&(input_flag_testing_integrity|input_flag_canonical_decode))==0;
         auto previous=settings_;settings_=smaf::settings();
         decodeRepeats_=(flags&(input_flag_no_looping|input_flag_canonical_decode))?0:settings_.repeats;
-        if(!bridge_||!pristine_||decodeRepeats_!=loadedRepeats_||previous.folder!=settings_.folder||previous.ma5Folder!=settings_.ma5Folder||previous.engine!=settings_.engine||previous.volume!=settings_.volume||previous.reverb!=settings_.reverb||previous.chorus!=settings_.chorus||previous.fadeMs!=settings_.fadeMs) start(abort,decodeRepeats_);
+        if(!bridge_||!pristine_||decodeRepeats_!=loadedRepeats_||previous.folder!=settings_.folder||previous.ma5Folder!=settings_.ma5Folder||previous.engine!=settings_.engine||previous.volume!=settings_.volume||previous.reverb!=settings_.reverb||previous.chorus!=settings_.chorus||previous.fadeMs!=settings_.fadeMs||previous.sampleRate!=settings_.sampleRate) start(abort,decodeRepeats_);
     }
     bool decode_run(audio_chunk& chunk,abort_callback& abort) {
         abort.check();auto pcm=pending_.empty()?read(abort):std::move(pending_);pending_.clear();
         if(pcm.empty()) return false;
-        chunk.set_data_32(pcm.data(),pcm.size()/2,2,44100);return true;
+        chunk.set_data_32(pcm.data(),pcm.size()/2,2,sampleRate_);return true;
     }
     void decode_seek(double seconds,abort_callback& abort) {
         if(!std::isfinite(seconds)||seconds<0) throw exception_io_data("Invalid seek position");
@@ -161,9 +167,9 @@ public:
                 bridge_->seek(static_cast<uint64_t>(seconds*1000),[&]{abort.check();});pristine_=false;
             } else {
                 start(abort,decodeRepeats_);
-                uint64_t remaining=audio_math::time_to_samples(seconds,44100);
+                uint64_t remaining=audio_math::time_to_samples(seconds,sampleRate_);
                 while(remaining) {
-                    unsigned frames=static_cast<unsigned>(std::min(remaining,uint64_t(44100*5)));
+                    unsigned frames=static_cast<unsigned>(std::min(remaining,uint64_t(sampleRate_*5)));
                     bool eof=false;pending_=bridge_->discard(frames,[&]{abort.check();},settings_.volume,eof);remaining-=frames;
                     if(eof) break;
                 }

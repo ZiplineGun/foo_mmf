@@ -2,7 +2,7 @@
 
 ## Release scope
 
-Version 1.0 provides independent MMF, MLD and MIDI decoders for foobar2000 2.x. It supports Yamaha MA2, MA3, MA5 and MA7 songs through user-supplied MA7 or MA5 libraries. MA4 and MA6 are not target generations. Decoder priority is set under Preferences > Playback > Decoding.
+Version 1.1 provides independent MMF, MLD and MIDI decoders for foobar2000 2.x. It supports Yamaha MA2, MA3, MA5 and MA7 songs through user-supplied MA7 or MA5 libraries. MA4 and MA6 are not target generations. Decoder priority is set under Preferences > Playback > Decoding.
 
 The component runs in x86 or x64 foobar; ARM64EC foobar uses the x64 component. Yamaha libraries always run in a separate x86 helper. Both installers use Program Files (x86) on x64/ARM64 Windows and Program Files on 32-bit Windows. Explicit library folders override discovery.
 
@@ -15,6 +15,7 @@ The component runs in x86 or x64 foobar; ARM64EC foobar uses the x64 component. 
 | `src/bridge.*`, `src/protocol.hpp`, `src/loading.hpp` | Process isolation, IPC and deadlines |
 | `src/helper.cpp`, `src/yamaha.*` | x86 synthesis host and engine adapters |
 | `src/midi.hpp` | In-memory MIDI effects filtering |
+| `src/metadata.hpp` | Bounded SMAF CNTI/OPDA text metadata reader |
 | `src/probe.cpp` | Standalone WAV renderer and loading benchmark |
 | `tests/` | Bridge, real-host and loading stress tests |
 | `tools/` | Package validation and disposable host test launcher |
@@ -45,6 +46,12 @@ MA5 loading has a five-second no-progress timeout and one retry in a fresh helpe
 Playback uses native seeks. Conversion and integrity testing reconstruct exact sample positions at normal tempo and pitch. Saved Yamaha volume applies to conversion; temporary playback controls do not. Tempo is limited to 70..130 percent, transpose to -12..12 semitones, and volume to 0..127 with a default of 64.
 
 MIDI decoding is always registered. Reverb and chorus default on and can be disabled independently. Disabled effects are suppressed in an in-memory MIDI copy, including after resets. MMF/MLD effects and source files are preserved.
+
+Both engines support 44,100 and 48,000 Hz synthesis. The saved sample rate defaults to 48,000 Hz and applies when a decoder is initialized; active audio keeps its current format. IPC reports the actual rate, and PCM blocks remain 10 ms. Changing rate reinitializes the engine inside its existing helper process. Exact seeks use the selected rate.
+
+MMF titles, artists, composers, lyricists, arrangers, copyright and other recognized text fields are exposed as foobar metadata. Parse only bounded top-level CNTI and OPDA/Dch chunks; honor their declared text encodings. Unsupported or malformed text is omitted. Metadata reading never changes source files.
+
+After nominal song end, hold candidate silent blocks while confirming the existing 250 ms quiet-tail criterion. Discard confirmed trailing silence; if sound returns, emit the held blocks before it to retain delayed-effect timing. Preserve audible release tails, finite repeats, the ten-second tail limit and normal foobar EOF. This removes the added quarter-second gap without forcing an infinite Yamaha repeat. End positions still have the renderer's 10 ms block resolution.
 
 ## Validation and remaining work
 

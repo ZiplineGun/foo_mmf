@@ -46,14 +46,15 @@ int wmain(int argc,wchar_t** argv) {
                 std::vector<uint8_t> file(payload.end()-request.fileBytes,payload.end());
                 if(request.reverb>1||request.chorus>1||request.volume<0||request.volume>127) throw std::runtime_error("Invalid synthesis settings");
                 if(request.engine!=5&&request.engine!=7) throw std::runtime_error("Invalid Yamaha engine");
+                if(request.sampleRate!=44100&&request.sampleRate!=48000) throw std::runtime_error("Invalid Yamaha sample rate");
                 auto kind=static_cast<smaf::Engine>(request.engine);
-                if(!engine||folder!=engineFolder||kind!=engineKind) {
+                if(!engine||folder!=engineFolder||kind!=engineKind||engine->rate()!=request.sampleRate) {
                     auto stage=smaf::LoadStage::releaseSong;send(pipe,smaf::ipc::progress,&stage,sizeof(stage));
-                    engine.reset();engine=std::make_unique<smaf::Yamaha>(folder,kind,[&](smaf::LoadStage stage){send(pipe,smaf::ipc::progress,&stage,sizeof(stage));});engineFolder=folder;engineKind=kind;
+                    engine.reset();engine=std::make_unique<smaf::Yamaha>(folder,kind,[&](smaf::LoadStage stage){send(pipe,smaf::ipc::progress,&stage,sizeof(stage));},request.sampleRate);engineFolder=folder;engineKind=kind;
                 }
                 engine->open(std::move(file),request.repeats,request.fadeMs,request.volume,request.reverb!=0,request.chorus!=0);
                 current={100,0,request.volume};
-                smaf::ipc::OpenReply reply{engine->lengthMs(),smaf::sampleRate,2};
+                smaf::ipc::OpenReply reply{engine->lengthMs(),engine->rate(),2};
                 send(pipe,header.command,&reply,sizeof(reply));
             } else if(header.command==smaf::ipc::read) {
                 if(!engine||payload.size()!=sizeof(current)) throw std::runtime_error("Invalid read request");
@@ -61,7 +62,7 @@ int wmain(int argc,wchar_t** argv) {
                 if(request.tempo!=current.tempo||request.transpose!=current.transpose||request.volume!=current.volume) {
                     engine->controls(request.tempo,request.transpose,request.volume);current=request;
                 }
-                std::array<float,smaf::blockFrames*2> pcm;
+                std::array<float,smaf::maxBlockFrames*2> pcm;
                 unsigned count=engine->read(pcm.data());
                 send(pipe,header.command,pcm.data(),count*2*sizeof(float));
             } else if(header.command==smaf::ipc::seek) {
@@ -71,9 +72,9 @@ int wmain(int argc,wchar_t** argv) {
             } else if(header.command==smaf::ipc::discard) {
                 if(!engine||payload.size()!=sizeof(smaf::ipc::Discard)) throw std::runtime_error("Invalid discard request");
                 smaf::ipc::Discard request;memcpy(&request,payload.data(),sizeof(request));
-                if(request.frames>5*smaf::sampleRate) throw std::runtime_error("Oversized discard request");
+                if(request.frames>5*engine->rate()) throw std::runtime_error("Oversized discard request");
                 current=request.controls;engine->controls(current.tempo,current.transpose,current.volume);
-                std::array<float,smaf::blockFrames*2> pcm{};
+                std::array<float,smaf::maxBlockFrames*2> pcm{};
                 unsigned remaining=request.frames,offset=0,count=0;
                 while(remaining) {
                     count=engine->read(pcm.data());if(!count) {offset=0;break;}

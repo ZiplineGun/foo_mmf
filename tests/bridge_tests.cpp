@@ -24,6 +24,52 @@ static std::vector<float> render(smaf::Bridge& bridge,int volume=64) {
     for(unsigned n=0;n<15000;++n) {auto block=bridge.read(100,0,[]{},volume);if(block.empty()) return result;result.insert(result.end(),block.begin(),block.end());}
     throw std::runtime_error("Test render did not reach EOF");
 }
+static double toneFrequency(const std::vector<float>& pcm,unsigned rate) {
+    double best=0,frequency=0;
+    for(double hz=400;hz<=520;hz+=0.5) {
+        double real=0,imaginary=0;unsigned count=rate/4;
+        for(unsigned n=0;n<count;n+=4) {
+            double window=0.5-0.5*std::cos(6.283185307179586*n/count);
+            double phase=6.283185307179586*hz*n/rate,value=pcm[(n+rate/10)*2]*window;
+            real+=value*std::cos(phase);imaginary+=value*std::sin(phase);
+        }
+        double energy=real*real+imaginary*imaginary;
+        if(energy>best) {best=energy;frequency=hz;}
+    }
+    return frequency;
+}
+static void testRates(const std::wstring& helper,const std::wstring& folder,const std::wstring& fixtures,smaf::Engine engine) {
+    auto check=[]{};auto song=readFile(fixtures+L"\\GuitarMan.mmf");
+    smaf::Bridge bridge(helper,folder,song,0,5000,check,64,true,engine,true,48000);auto pid=bridge.processId();
+    for(unsigned rate:{48000u,44100u,48000u}) {
+        bridge.open(folder,song,0,5000,check,64,true,true,rate);
+        require(bridge.rate()==rate&&bridge.processId()==pid,"Rate change lost format or hot helper");
+        auto pcm=render(bridge);double duration=double(pcm.size()/2)/rate;
+        require(std::abs(duration-double(bridge.lengthMs())/1000)<0.011,"GuitarMan has added trailing silence");
+        bridge.open(folder,song,0,5000,check,64,true,true,rate);
+        unsigned offset=rate*1234/1000;bool eof=false;auto remainder=bridge.discard(offset,check,64,eof);
+        require(!eof&&std::equal(remainder.begin(),remainder.end(),pcm.begin()+offset*2),"Rate-aware exact seek differs");
+        bridge.seek(31000,check);require(!render(bridge).empty(),"Rate-aware native seek failed near EOF");
+        bridge.seek(0,check);require(!bridge.read(100,0,check).empty(),"Seek after trimmed EOF failed");
+        if(engine==smaf::Engine::ma7) {
+            auto tone=midi({0,0xc0,0,0,0x90,69,100,0x87,0x40,0x80,69,0,0,0xff,0x2f,0});
+            bridge.open(folder,tone,0,5000,check,64,false,false,rate);auto dry=render(bridge);
+            require(std::abs(double(dry.size()/2)/rate-5.0)<0.011,"Dry MIDI has appended silence");
+            double pitch=toneFrequency(dry,rate);require(std::abs(pitch-440)<2,"Sample rate changed MIDI pitch");
+            bridge.open(folder,tone,0,5000,check,64,true,true,rate);auto wet=render(bridge);
+            require(wet.size()>dry.size()+rate/10*2,"Audible MIDI effects tail was truncated");
+            bridge.open(folder,readFile(fixtures+L"\\930ca_11.mmf"),0,5000,check,64,true,true,rate);
+            auto effects=render(bridge);require(double(effects.size()/2)/rate>bridge.lengthMs()/1000.0+1,"MMF reverb tail was truncated");
+            for(auto name:{L"Cat dance.mmf",L"MarsMine.mmf"}) {
+                bridge.open(folder,readFile(fixtures+L"\\"+name),0,5000,check,64,true,true,rate);
+                auto loop=render(bridge);require(std::abs(double(loop.size()/2)/rate-bridge.lengthMs()/1000.0)<0.011,"Loop example retains silent tail");
+            }
+            std::printf("PASS %u Hz: A4 %.1f Hz, dry %.3f s, wet %.3f s, MMF effects preserved\n",rate,pitch,double(dry.size()/2)/rate,double(wet.size()/2)/rate);
+        }
+    }
+    fails([&]{bridge.open(folder,song,0,5000,check,64,true,true,32000);},"unsupported output rate");
+    std::puts("PASS 44.1/48 kHz hot switching, duration, native/exact seeks and trimmed EOF");
+}
 static void testMa5(const std::wstring& helper,const std::wstring& folder,const std::wstring& ma7,const std::wstring& fixtures) {
     auto check=[]{};auto melody=readFile(fixtures+L"\\Melody11.mmf");
     std::wprintf(L"Testing MA5 libraries: %ls\n",folder.c_str());fflush(stdout);
@@ -185,7 +231,8 @@ int wmain(int argc,wchar_t** argv) {
             CloseHandle(snapshot);require(killed,"Could not terminate test helper");
             fails([&]{bridge.read(100,0,noAbort);},"helper crash");
         }
-        if(argc==6) {testMa5(helper,argv[4],folder,fixtures);testMa5(helper,argv[5],folder,fixtures);}
+        testRates(helper,folder,fixtures,smaf::Engine::ma7);
+        if(argc==6) {testMa5(helper,argv[4],folder,fixtures);testRates(helper,argv[4],fixtures,smaf::Engine::ma5);testMa5(helper,argv[5],folder,fixtures);testRates(helper,argv[5],fixtures,smaf::Engine::ma5);}
         std::printf("PASS all bridge tests (%zu-bit client)\n",sizeof(void*)*8);return 0;
     } catch(const std::exception& e) {std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}
 }
