@@ -67,4 +67,6 @@ Repeated real-host runs can intermittently fail strict PCM comparisons around vo
 
 A PCM inequality does not by itself establish audible corruption. Use `Host-Test.ps1 -CapturePcm` to retain unmodified reference/actual WAVs on a comparison failure; it also repeats the volume-control checks. Describe audible symptoms only after inspecting a capture, and label deliberately different volume renders as illustrations rather than reproductions.
 
+Manual listening to the captured MarsMine pair found no corruption, only a small apparent timing difference unlikely to be noticed during normal playback. Sample onset and coarse envelope measurements support a timing difference, but do not establish that reported engine position is its cause. Keep the strict comparisons for diagnosis; this capture is not evidence of a volume-setting failure.
+
 Expanded MLD seek/reopen regressions also exposed intermittent MA7 engine-reset timeouts. These are bounded by the existing 30-second request limit; the precise trigger remains unresolved. The n900i full-render regression passes independently of this separate issue.
