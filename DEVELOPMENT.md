@@ -65,4 +65,6 @@ Broader song/library compatibility and controlled listening comparisons remain u
 
 Repeated real-host runs can intermittently fail strict PCM comparisons around volume and live-control transitions. Both architectures also produced passing runs; the direct bridge suite passed. The cause is unresolved and the assertions remain strict. See DEVELOPMENT_NOTES.md before interpreting a single passing run as complete validation.
 
+A PCM inequality does not by itself establish audible corruption. Use `Host-Test.ps1 -CapturePcm` to retain unmodified reference/actual WAVs on a comparison failure; it also repeats the volume-control checks. Describe audible symptoms only after inspecting a capture, and label deliberately different volume renders as illustrations rather than reproductions.
+
 Expanded MLD seek/reopen regressions also exposed intermittent MA7 engine-reset timeouts. These are bounded by the existing 30-second request limit; the precise trigger remains unresolved. The n900i full-render regression passes independently of this separate issue.

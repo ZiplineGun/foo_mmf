@@ -30,6 +30,8 @@ Add `-Features` for MMF title/copyright, both sample rates with both engines, ex
 
 Add `-Corpus` for all MLD files recursively under `test files/n900i`, including `Unlocked`. Eight concurrent decoders run each file in conversion and integrity-test modes at 48 kHz, checking EOF and seeks beyond/back from EOF. This suite has a five-minute host deadline and bounded per-file rendering; its results must be fresh like the other host suites.
 
+Add `-CapturePcm` to the standard suite to repeat the volume-control comparisons 20 times and save the first failing pair under `analysis/pcm-captures/<PID>-<tick>/`. `actual.wav` and `reference.wav` are unnormalized stereo float WAVs; `capture.txt` records the assertion, source fixture, sample rate and sample counts. The assertions still fail normally. For the negative assertion that temporary volume should change the audio, identical actual/reference clips demonstrate the missing change rather than a corrupted waveform.
+
 ## Metadata tests
 
 Build `metadata_tests.vcxproj` for x64 and Win32. Run the executable without arguments for synthetic CNTI/OPDA encoding, escaping, malformed/truncated input and mutation tests. An optional folder argument, such as `"test files\meta"`, checks supplied metadata fixtures. These tests need no Yamaha DLLs or foobar installation.
@@ -86,7 +88,15 @@ Version 1.1 validation (2026-09-15):
 
 The historical intermittent PCM comparison issue described below remains open despite these passing runs.
 
+Follow-up listening-example investigation: the original failures were numerical test results, not verified audible glitches. Twelve fresh standard host runs (six per architecture) passed without a capture. Forty direct eight-second MA7 comparisons of saved volume 32 versus volume 64 changed to 32 before the first audio request were bit-identical, including 0/1/10/100 ms request delays. A 20-round x64 control check also passed. The subsequent Win32 capture run reproduced `Saved volume not applied to a new decoder` and saved the real failing/reference pair.
+
+That capture contains the first second of MarsMine at 44.1 kHz: saved-volume-32 conversion versus temporary-volume-32 playback. Of 88,200 interleaved samples, 79,603 differ, with maximum absolute delta 0.144775391. Their RMS levels differ by only 0.0026 dB and neither clips, so this capture does not substantiate a missed volume setting despite the assertion's wording. The variation affects waveform/spectral content; its cause and perceptual significance remain unconfirmed. The original captures and a reference/actual listening comparison are saved locally under `out/audio-examples/pcm-mismatch/`, excluded from Git. The preview adds the same 12.04 dB gain to both excerpts without clipping; individual files preserve the original levels and samples.
+
+A separate local listening illustration uses normal eight-second MarsMine renders at Yamaha volumes 32 and 64, with no post-render normalization. The volume-64 excerpt measures 11.29 dB louder by RMS. It illustrates a volume change having no effect; it is explicitly not the captured intermittent failure. Generated audio and its explanation stay outside Git under `out/audio-examples/`.
+
 Follow-up manual testing confirmed that the track-length fix plays the loop examples correctly. Differing displayed sample rates were confirmed to be cached metadata; reloading file information corrected them. Direct MA7 renders of Dragon Quest 8 Overture, 930ca_11, Cat Dance and GuitarMan all used 48,000 Hz with normal song timing. The README settings section documents the sample-rate preference and cache refresh.
+
+The user subsequently confirmed that the n900i conversion batch completes successfully with 1.1.1.
 
 The pre-release component passed packaged x86/x64 host suites, bridge suites with MA7 and both MA5 releases, controlled recovery tests and package architecture checks. Manual testing confirmed NVDA accessibility, ARM64EC playback and corrected ARM64 MA7 automatic discovery.
 

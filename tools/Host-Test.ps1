@@ -1,4 +1,4 @@
-param([string]$Foobar = 'C:\Program Files\foobar2000', [ValidateSet('x64','Win32')][string]$Platform = 'x64', [switch]$Package, [switch]$Recovery, [switch]$Features, [switch]$Corpus)
+param([string]$Foobar = 'C:\Program Files\foobar2000', [ValidateSet('x64','Win32')][string]$Platform = 'x64', [switch]$Package, [switch]$Recovery, [switch]$Features, [switch]$Corpus, [switch]$CapturePcm)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $portable = Join-Path $root "analysis\foobar-$Platform"
@@ -38,8 +38,9 @@ try {
     if ($Recovery) { $env:FOO_MMF_TEST_RECOVERY = '1' }
     if ($Features) { $env:FOO_MMF_TEST_FEATURES = '1' }
     if ($Corpus) { $env:FOO_MMF_TEST_CORPUS = '1' }
+    if ($CapturePcm) { $env:FOO_MMF_CAPTURE_PCM = '1' }
     $process = Start-Process -FilePath (Join-Path $portable 'foobar2000.exe') -WorkingDirectory $portable -WindowStyle Hidden -PassThru
-} finally { Remove-Item Env:FOO_MMF_TEST_ROOT; if ($Recovery) { Remove-Item Env:FOO_MMF_TEST_RECOVERY }; if ($Features) { Remove-Item Env:FOO_MMF_TEST_FEATURES }; if ($Corpus) { Remove-Item Env:FOO_MMF_TEST_CORPUS } }
+} finally { Remove-Item Env:FOO_MMF_TEST_ROOT; if ($Recovery) { Remove-Item Env:FOO_MMF_TEST_RECOVERY }; if ($Features) { Remove-Item Env:FOO_MMF_TEST_FEATURES }; if ($Corpus) { Remove-Item Env:FOO_MMF_TEST_CORPUS }; if ($CapturePcm) { Remove-Item Env:FOO_MMF_CAPTURE_PCM } }
 Write-Output "Portable test host PID: $($process.Id)"
 $waitLimit = if ($Corpus) { 300 } else { 45 }
 $waitStarted = [Diagnostics.Stopwatch]::StartNew()

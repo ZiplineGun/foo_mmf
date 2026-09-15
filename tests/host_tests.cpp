@@ -10,6 +10,7 @@
 #include <set>
 #include <filesystem>
 #include <random>
+#include <fstream>
 #include <foobar2000/SDK/console_manager.h>
 #include "freeze_helper.hpp"
 
@@ -18,6 +19,28 @@ VALIDATE_COMPONENT_FILENAME("foo_mmf_tests.dll");
 static void require(bool value,const char* message){if(!value) throw std::runtime_error(message);}
 class Callback : public preferences_page_callback {void on_state_changed() override {}};
 static FILE* logFile;
+static unsigned expectedRate=44100;
+static void capturePcm(const std::vector<audio_sample>& actual,const std::vector<audio_sample>& expected,const char* message) {
+    if(!GetEnvironmentVariableW(L"FOO_MMF_CAPTURE_PCM",nullptr,0)) return;
+    wchar_t root[32768];DWORD count=GetEnvironmentVariableW(L"FOO_MMF_TEST_ROOT",root,32768);
+    if(!count||count>=32768) return;
+    const auto captureId=std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64());
+    const auto folder=std::filesystem::path(root)/L"analysis"/L"pcm-captures"/captureId;
+    std::filesystem::create_directories(folder);
+    auto write=[&](const wchar_t* name,const std::vector<audio_sample>& samples) {
+        std::ofstream file(folder/name,std::ios::binary);
+        auto u16=[&](uint16_t value){file.put(char(value));file.put(char(value>>8));};
+        auto u32=[&](uint32_t value){u16(uint16_t(value));u16(uint16_t(value>>16));};
+        uint32_t bytes=static_cast<uint32_t>(samples.size()*sizeof(float));
+        file.write("RIFF",4);u32(36+bytes);file.write("WAVEfmt ",8);u32(16);u16(3);u16(2);
+        u32(expectedRate);u32(expectedRate*8);u16(8);u16(32);file.write("data",4);u32(bytes);
+        for(auto sample:samples) {float value=static_cast<float>(sample);file.write(reinterpret_cast<const char*>(&value),sizeof(value));}
+        if(!file) throw std::runtime_error("Cannot save PCM capture");
+    };
+    write(L"actual.wav",actual);write(L"reference.wav",expected);
+    std::ofstream note(folder/L"capture.txt");note<<message<<"\nTest fixture: MarsMine.mmf, excerpt from start\nSample rate: "<<expectedRate<<"\nActual samples: "<<actual.size()<<"\nReference samples: "<<expected.size()<<"\n";
+    fprintf(logFile,"Saved unmodified PCM pair in analysis/pcm-captures/%s\n",pfc::stringcvt::string_utf8_from_wide(captureId.c_str()).get_ptr());fflush(logFile);
+}
 static void log(const char* message){fprintf(logFile,"%s\n",message);fflush(logFile);}
 static void requirePcmEqual(const std::vector<audio_sample>& actual,const std::vector<audio_sample>& expected,const char* message) {
     if(actual==expected) return;
@@ -28,11 +51,11 @@ static void requirePcmEqual(const std::vector<audio_sample>& actual,const std::v
         actualEnergy+=double(actual[i])*actual[i];expectedEnergy+=double(expected[i])*expected[i];
     }
     fprintf(logFile,"PCM mismatch: actual=%zu expected=%zu differing=%zu maxDelta=%.9g energyRatio=%.9g\n",actual.size(),expected.size(),different,maxDelta,expectedEnergy?actualEnergy/expectedEnergy:0);
+    capturePcm(actual,expected,message);
     fflush(logFile);throw std::runtime_error(message);
 }
 static std::wstring environment(const wchar_t* name){wchar_t value[32768];DWORD count=GetEnvironmentVariableW(name,value,32768);require(count&&count<32768,"Missing test environment");return value;}
 static input_entry::ptr decoderEntry, mldEntry, midiEntry;
-static unsigned expectedRate=44100;
 static void pump(unsigned milliseconds);
 static void clearConsole(){console::clearBacklog();}
 static unsigned countConsole(const char* text) {
@@ -308,20 +331,24 @@ static void runTests() {
         require(reinterpret_cast<HWND>(SendDlgItemMessageW(controls,IDC_TEMPO_SPIN,UDM_GETBUDDY,0,0))==GetDlgItem(controls,IDC_TEMPO),"Tempo spin has no buddy");
         int low=0,high=0;SendDlgItemMessageW(controls,IDC_VOLUME_SPIN,UDM_GETRANGE32,reinterpret_cast<WPARAM>(&low),reinterpret_cast<LPARAM>(&high));require(low==0&&high==127,"Volume spin range incorrect");
         // Exercise actual keyboard spin handling, then a volume-only debounced change.
-        SendDlgItemMessageW(controls,IDC_VOLUME,WM_KEYDOWN,VK_UP,0);SendDlgItemMessageW(controls,IDC_VOLUME,WM_KEYUP,VK_UP,0);
-        require(GetDlgItemInt(controls,IDC_VOLUME,nullptr,FALSE)==65,"Up key did not increment volume spin");
-        SetDlgItemTextW(controls,IDC_VOLUME,L"32");
-        auto beforePause=openDecoder(song,input_flag_playback);auto normal=collect(beforePause,44100);beforePause.release();
-        require(normal==std::vector<audio_sample>(reference.begin(),reference.begin()+88200),"Volume applied before inactivity timer");
-        pump(450);
-        auto volumeOnly=openDecoder(song,input_flag_playback);auto quieter=collect(volumeOnly,44100);volumeOnly.release();
-        require(quieter!=normal,"Temporary volume alone has no effect");
-        SetDlgItemTextW(controls,IDC_VOLUME,L"999");pump(450);
-        volumeOnly=openDecoder(song,input_flag_playback);requirePcmEqual(collect(volumeOnly,44100),quieter,"Invalid volume changed playback");volumeOnly.release();
-        SetDlgItemTextW(prefs,IDC_VOLUME,L"32");instance->apply();
-        auto savedVolume=openDecoder(song,0);requirePcmEqual(collect(savedVolume,44100),quieter,"Saved volume not applied to a new decoder");savedVolume.release();
-        SendMessageW(controls,WM_COMMAND,IDC_RESET,0);require(GetDlgItemInt(controls,IDC_VOLUME,nullptr,FALSE)==32,"Reset ignored saved volume");
-        SetDlgItemTextW(prefs,IDC_VOLUME,L"64");instance->apply();SendMessageW(controls,WM_COMMAND,IDC_RESET,0);
+        const unsigned volumeRounds=GetEnvironmentVariableW(L"FOO_MMF_CAPTURE_PCM",nullptr,0)?20:1;
+        for(unsigned volumeRound=0;volumeRound<volumeRounds;++volumeRound) {
+            SendDlgItemMessageW(controls,IDC_VOLUME,WM_KEYDOWN,VK_UP,0);SendDlgItemMessageW(controls,IDC_VOLUME,WM_KEYUP,VK_UP,0);
+            require(GetDlgItemInt(controls,IDC_VOLUME,nullptr,FALSE)==65,"Up key did not increment volume spin");
+            SetDlgItemTextW(controls,IDC_VOLUME,L"32");
+            auto beforePause=openDecoder(song,input_flag_playback);auto normal=collect(beforePause,44100);beforePause.release();
+            requirePcmEqual(normal,std::vector<audio_sample>(reference.begin(),reference.begin()+88200),"Volume applied before inactivity timer");
+            pump(450);
+            auto volumeOnly=openDecoder(song,input_flag_playback);auto quieter=collect(volumeOnly,44100);volumeOnly.release();
+            if(quieter==normal) capturePcm(quieter,normal,"Temporary volume alone has no effect (both clips identical)");
+            require(quieter!=normal,"Temporary volume alone has no effect");
+            SetDlgItemTextW(controls,IDC_VOLUME,L"999");pump(450);
+            volumeOnly=openDecoder(song,input_flag_playback);requirePcmEqual(collect(volumeOnly,44100),quieter,"Invalid volume changed playback");volumeOnly.release();
+            SetDlgItemTextW(prefs,IDC_VOLUME,L"32");instance->apply();
+            auto savedVolume=openDecoder(song,0);requirePcmEqual(collect(savedVolume,44100),quieter,"Saved volume not applied to a new decoder");savedVolume.release();
+            SendMessageW(controls,WM_COMMAND,IDC_RESET,0);require(GetDlgItemInt(controls,IDC_VOLUME,nullptr,FALSE)==32,"Reset ignored saved volume");
+            SetDlgItemTextW(prefs,IDC_VOLUME,L"64");instance->apply();SendMessageW(controls,WM_COMMAND,IDC_RESET,0);
+        }
         log("PASS keyboard spins, debounce, invalid edits and saved/temporary volume");
         SetDlgItemTextW(controls,IDC_TEMPO,L"130");SetDlgItemTextW(controls,IDC_TRANSPOSE,L"12");SetDlgItemTextW(controls,IDC_VOLUME,L"32");pump(450);
         auto conversion=openDecoder(song,0);auto converted=collect(conversion,44100);
