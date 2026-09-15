@@ -54,6 +54,7 @@ private:
     std::deque<std::vector<float>> heldTail_,readyAudio_;
     double ma5Position_{};
     unsigned ma5PollBlocks_{};
+    int lastPosition_=-1;
     std::vector<uint8_t> data_;
     Control control_{};
     int(__cdecl* generate_)(void*,unsigned){};

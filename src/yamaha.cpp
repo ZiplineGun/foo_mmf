@@ -91,7 +91,7 @@ void Yamaha::open(std::vector<uint8_t> data,unsigned repeats,unsigned fadeMs,int
     }
     if(data.empty()||data.size()>maxFileBytes||repeats>254||fadeMs>30000) throw std::runtime_error("Invalid song or playback settings");
     data_=enableReverb&&enableChorus?std::move(data):midiEffects(data,enableReverb,enableChorus); repeats_=repeats; repeatsLeft_=repeats; fadeMs_=fadeMs;
-    tailFrames_=quietFrames_=ma5PollBlocks_=0;ma5Position_=0; ending_=finished_=false;
+    tailFrames_=quietFrames_=ma5PollBlocks_=0;ma5Position_=0;lastPosition_=-1; ending_=finished_=false;
     using Load=int(__cdecl*)(const void*,unsigned,unsigned,unsigned);
     progress(LoadStage::load);
     handle_=engine_==Engine::ma5?
@@ -147,7 +147,7 @@ void Yamaha::seek(uint64_t milliseconds) {
     checked("SeekReady",melodyApi<int(__cdecl*)(int,int)>("WaitReady")(handle_,-1));
     controls(tempo_,transpose_,volume_);
     checked("SeekStart",melodyApi<One>("Start")(handle_)); started_=true;
-    ma5Position_=position;ma5PollBlocks_=0;
+    ma5Position_=position;ma5PollBlocks_=0;lastPosition_=-1;
     ending_=finished_=false;tailFrames_=quietFrames_=0;
 }
 int Yamaha::positionMs() {return checked("Position",songControl(0x1111002b,nullptr));}
@@ -192,8 +192,13 @@ unsigned Yamaha::render(float* interleaved) {
         }
         position=static_cast<int>(ma5Position_);
     } else position=positionMs();
-    // MA5's millisecond position saturates at length - 1 (both library versions).
-    if(position>=static_cast<int>(length_)-(engine_==Engine::ma5?1:0)) ending_=true;
+    // MA5 saturates one millisecond short. MA7 can stop up to one 10-ms block
+    // short on MLD files while Generate keeps returning PCM forever. Confirm
+    // that MA7's position has stopped advancing before allowing that tolerance;
+    // audible release tails still pass through the normal end handling below.
+    const bool stoppedNearEnd=engine_==Engine::ma7&&position==lastPosition_&&position>=static_cast<int>(length_)-10;
+    lastPosition_=position;
+    if(position>=static_cast<int>(length_)-(engine_==Engine::ma5?1:0)||stoppedNearEnd) ending_=true;
     int peak=0;
     for(unsigned i=0;i<frames_;++i) {
         const int l=std::clamp(left[i],-32768,32767), r=std::clamp(right[i],-32768,32767);
@@ -210,7 +215,7 @@ unsigned Yamaha::render(float* interleaved) {
             checked("RepeatReady",melodyApi<int(__cdecl*)(int,int)>("WaitReady")(handle_,-1));
             controls(tempo_,transpose_,volume_);
             checked("RepeatStart",melodyApi<One>("Start")(handle_));
-            ma5Position_=0;ma5PollBlocks_=0;
+            ma5Position_=0;ma5PollBlocks_=0;lastPosition_=-1;
             --repeatsLeft_; ending_=false; return frames_;
         }
         tailFrames_+=frames_;

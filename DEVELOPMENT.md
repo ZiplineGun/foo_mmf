@@ -2,7 +2,7 @@
 
 ## Release scope
 
-Version 1.1 provides independent MMF, MLD and MIDI decoders for foobar2000 2.x. It supports Yamaha MA2, MA3, MA5 and MA7 songs through user-supplied MA7 or MA5 libraries. MA4 and MA6 are not target generations. Decoder priority is set under Preferences > Playback > Decoding.
+Version 1.1.1 provides independent MMF, MLD and MIDI decoders for foobar2000 2.x. It supports Yamaha MA2, MA3, MA5 and MA7 songs through user-supplied MA7 or MA5 libraries. MA4 and MA6 are not target generations. Decoder priority is set under Preferences > Playback > Decoding.
 
 The component runs in x86 or x64 foobar; ARM64EC foobar uses the x64 component. Yamaha libraries always run in a separate x86 helper. Both installers use Program Files (x86) on x64/ARM64 Windows and Program Files on 32-bit Windows. Explicit library folders override discovery.
 
@@ -55,6 +55,8 @@ MMF titles, artists, composers, lyricists, arrangers, copyright and other recogn
 
 After nominal song end, hold candidate silent blocks while confirming the existing 250 ms quiet-tail criterion. Discard confirmed trailing silence; if sound returns, emit the held blocks before it to retain delayed-effect timing. Preserve audible release tails, finite repeats, the ten-second tail limit and normal foobar EOF. This removes the added quarter-second gap without forcing an infinite Yamaha repeat. End positions still have the renderer's 10 ms block resolution.
 
+Some MA7 MLD files stop reporting position 1..9 ms before their declared length while continuing to generate silence. Once position stops advancing within the final 10 ms, enter normal release-tail handling. Reset this position history on open, seek and repeat. This prevents endless conversion/integrity decoding; per-request timeouts alone cannot detect a helper that keeps returning valid PCM. MA5 retains its existing one-millisecond end tolerance.
+
 ## Validation and remaining work
 
 Playback and default discovery have been confirmed in x86, x64 and ARM64EC foobar. NVDA accessibility has been confirmed. Automated tests cover audio, seeking, effects, helper reuse, cancellation, MA5 recovery and native UI controls. See DEVELOPMENT_NOTES.md for test prerequisites and commands.
@@ -62,3 +64,5 @@ Playback and default discovery have been confirmed in x86, x64 and ARM64EC fooba
 Broader song/library compatibility and controlled listening comparisons remain useful future work. The intermittent MA5 stall is handled by process recovery; its internal cause is unresolved. Keep both development documents current when changing behavior or validation coverage.
 
 Repeated real-host runs can intermittently fail strict PCM comparisons around volume and live-control transitions. Both architectures also produced passing runs; the direct bridge suite passed. The cause is unresolved and the assertions remain strict. See DEVELOPMENT_NOTES.md before interpreting a single passing run as complete validation.
+
+Expanded MLD seek/reopen regressions also exposed intermittent MA7 engine-reset timeouts. These are bounded by the existing 30-second request limit; the precise trigger remains unresolved. The n900i full-render regression passes independently of this separate issue.

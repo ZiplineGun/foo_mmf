@@ -1,4 +1,4 @@
-param([string]$Foobar = 'C:\Program Files\foobar2000', [ValidateSet('x64','Win32')][string]$Platform = 'x64', [switch]$Package, [switch]$Recovery, [switch]$Features)
+param([string]$Foobar = 'C:\Program Files\foobar2000', [ValidateSet('x64','Win32')][string]$Platform = 'x64', [switch]$Package, [switch]$Recovery, [switch]$Features, [switch]$Corpus)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $portable = Join-Path $root "analysis\foobar-$Platform"
@@ -37,10 +37,15 @@ $chorusHeader = [byte[]](0x4d,0x54,0x68,0x64,0,0,0,6,0,0,0,1,0,96,0x4d,0x54,0x72
 try {
     if ($Recovery) { $env:FOO_MMF_TEST_RECOVERY = '1' }
     if ($Features) { $env:FOO_MMF_TEST_FEATURES = '1' }
+    if ($Corpus) { $env:FOO_MMF_TEST_CORPUS = '1' }
     $process = Start-Process -FilePath (Join-Path $portable 'foobar2000.exe') -WorkingDirectory $portable -WindowStyle Hidden -PassThru
-} finally { Remove-Item Env:FOO_MMF_TEST_ROOT; if ($Recovery) { Remove-Item Env:FOO_MMF_TEST_RECOVERY }; if ($Features) { Remove-Item Env:FOO_MMF_TEST_FEATURES } }
+} finally { Remove-Item Env:FOO_MMF_TEST_ROOT; if ($Recovery) { Remove-Item Env:FOO_MMF_TEST_RECOVERY }; if ($Features) { Remove-Item Env:FOO_MMF_TEST_FEATURES }; if ($Corpus) { Remove-Item Env:FOO_MMF_TEST_CORPUS } }
 Write-Output "Portable test host PID: $($process.Id)"
-if (-not $process.WaitForExit(45000)) { throw "Portable test host has not exited; inspect PID $($process.Id)." }
+$waitLimit = if ($Corpus) { 300 } else { 45 }
+$waitStarted = [Diagnostics.Stopwatch]::StartNew()
+while (-not $process.WaitForExit(1000)) {
+    if ($waitStarted.Elapsed.TotalSeconds -ge $waitLimit) { throw "Portable test host has not exited; inspect PID $($process.Id)." }
+}
 if (-not (Test-Path -LiteralPath $resultPath)) { throw "Test host exited without running the suite (exit code $($process.ExitCode))." }
 $result = Get-Content -LiteralPath (Join-Path $root 'analysis\host-results.txt') -Raw
 Copy-Item -LiteralPath (Join-Path $root 'analysis\host-results.txt') -Destination (Join-Path $root "analysis\host-results-$Platform.txt") -Force

@@ -65,6 +65,24 @@ static void testRates(const std::wstring& helper,const std::wstring& folder,cons
                 auto loop=render(bridge);require(std::abs(double(loop.size()/2)/rate-bridge.lengthMs()/1000.0)<0.011,"Loop example retains silent tail");
             }
             std::printf("PASS %u Hz: A4 %.1f Hz, dry %.3f s, wet %.3f s, MMF effects preserved\n",rate,pitch,double(dry.size()/2)/rate,double(wet.size()/2)/rate);
+            auto shortMld=fixtures+L"\\n900i\\n900i_130.mld";
+            if(GetFileAttributesW(shortMld.c_str())!=INVALID_FILE_ATTRIBUTES) {
+                std::printf("MLD %u Hz: open and full render\n",rate);fflush(stdout);
+                auto mld=readFile(shortMld);bridge.open(folder,mld,0,0,check,64,true,true,rate);
+                auto reference=render(bridge);double length=bridge.lengthMs()/1000.0;
+                require(std::abs(double(reference.size()/2)/rate-length)<0.03,"MLD stalled endpoint duration is incorrect");
+                std::puts("MLD: native seek near EOF");fflush(stdout);
+                bridge.seek(2000,check);require(!render(bridge).empty(),"MLD native seek near EOF failed");
+                std::puts("MLD: reopen for exact seek");fflush(stdout);
+                bridge.open(folder,mld,0,0,check,64,true,true,rate);
+                unsigned mldOffset=rate*1234/1000;bool mldEof=false;auto rest=bridge.discard(mldOffset,check,64,mldEof);
+                require(!mldEof&&!rest.empty()&&std::equal(rest.begin(),rest.end(),reference.begin()+mldOffset*2),"MLD exact seek changed PCM");
+                std::puts("MLD: reopen with finite repeat");fflush(stdout);
+                bridge.open(folder,mld,1,0,check,64,true,true,rate);
+                auto repeated=render(bridge);require(std::abs(double(repeated.size()/2)/rate-length*2)<0.04,"MLD finite repeat did not finish correctly");
+                bridge.seek(0,check);require(!bridge.read(100,0,check).empty(),"MLD seek from repeated EOF failed");
+                std::printf("PASS %u Hz: stalled MLD endpoint, exact/native seeks and finite repeats\n",rate);
+            }
         }
     }
     fails([&]{bridge.open(folder,song,0,5000,check,64,true,true,32000);},"unsupported output rate");

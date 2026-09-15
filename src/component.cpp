@@ -6,7 +6,7 @@
 #include <memory>
 #include <mutex>
 
-DECLARE_COMPONENT_VERSION("Yamaha SMAF decoder","1.1","SMAF MA2/MA3/MA5/MA7, MLD and MIDI playback using user-supplied Yamaha MA7 or MA5 libraries.\nYamaha libraries run in an isolated x86 helper process.");
+DECLARE_COMPONENT_VERSION("Yamaha SMAF decoder","1.1.1","SMAF MA2/MA3/MA5/MA7, MLD and MIDI playback using user-supplied Yamaha MA7 or MA5 libraries.\nYamaha libraries run in an isolated x86 helper process.");
 VALIDATE_COMPONENT_FILENAME("foo_mmf.dll");
 
 namespace {

@@ -28,6 +28,8 @@ Add `-Recovery` for controlled loading stalls. The test suspends only its own MA
 
 Add `-Features` for MMF title/copyright, both sample rates with both engines, exact/native seeks, preference keyboard navigation and consecutive complete decodes of the three loop fixtures. This suite also needs `test files/meta/GuitarMan.mmf`. It tests decoder EOF, not the output-device timing of foobar's Repeat (track) command.
 
+Add `-Corpus` for all MLD files recursively under `test files/n900i`, including `Unlocked`. Eight concurrent decoders run each file in conversion and integrity-test modes at 48 kHz, checking EOF and seeks beyond/back from EOF. This suite has a five-minute host deadline and bounded per-file rendering; its results must be fresh like the other host suites.
+
 ## Metadata tests
 
 Build `metadata_tests.vcxproj` for x64 and Win32. Run the executable without arguments for synthetic CNTI/OPDA encoding, escaping, malformed/truncated input and mutation tests. An optional folder argument, such as `"test files\meta"`, checks supplied metadata fixtures. These tests need no Yamaha DLLs or foobar installation.
@@ -48,12 +50,15 @@ The standalone tools can use your own songs without the named regression fixture
 
 The stress tool repeatedly opens shuffled MMF files, records timing and discards failed workers before continuing. A nonzero exit indicates a failure or timeout. The probe renders WAV or measures initialization and warm opens with `library-folder --benchmark song.mmf 5` (7 for MA7). Older MA5 libraries require the process-local `__COMPAT_LAYER=WinXPSP2VersionLie` environment when using the direct probe; the bridge applies this itself.
 
+Build `render_stress.vcxproj` to stress complete renders through the bridge. Arguments are helper path, DLL folder, song folder, engine (5/7), sample rate (44100/48000), passes and worker count (1..16). It recursively shuffles MMF, MLD and MID files, reuses a helper per worker, checks finite PCM and fails if EOF is missing beyond nominal duration plus 11 seconds. Each file also has a 120-second test deadline. Choose files supported by the selected engine; this tool does not implement component fallback.
+
 ## Maintenance notes
 
 - IPC version 6 adds the requested sample rate to Open; OpenReply reports the actual rate. It uses fixed-width messages and transfers audio, file bytes and folder strings. Never pass pointers between processes. Update both component architectures and the helper together after protocol changes.
 - Keep the MA7 and MA5 adapters separate: their initialization, control argument conventions and PCM layouts differ. Retain the existing hardware reset and complete engine reinitialization between files. Validate adapter changes with rendered audio, not just DLL loading.
 - Older MA5 libraries require the child-only Windows version compatibility setting. Do not change foobar's environment or persistent system compatibility settings.
 - MA5 position may stop one millisecond before nominal duration. Position polling is amortized over 100 ms of audio and confirmed near EOF. Preserve finite repeats and release tails.
+- MA7 can also stop short: n900i MLD fixtures have terminal position deficits of 1, 6 or 9 ms. Confirm unchanged position across consecutive generated blocks within the final 10 ms before starting release-tail handling. Keep position history reset across open/seek/repeat; do not use silence earlier in a song as an EOF signal.
 - Both rates use 10 ms blocks (441 or 480 stereo frames). Allocate for the maximum and use the actual rate for WAV headers, IPC bounds, seek reconstruction, duration and tail thresholds. The standalone probe retains 44,100 Hz as its default; append 44100 or 48000 after its chorus argument to select a rate, or after the engine in benchmark mode.
 - Tail confirmation holds only quiet blocks after nominal EOF (low peak and nearly constant samples, including Yamaha's residual DC offset). Discard the final held run only after confirmation; drain it before later sound. Clear held/ready audio on open and seek. Keep finite-repeat fade behavior unchanged.
 - Native playback seeks preserve musical position, not accumulated effect history. Conversion seeks must remain sample-exact and use saved volume with normal tempo/pitch.
@@ -62,6 +67,14 @@ The stress tool repeatedly opens shuffled MMF files, records timing and discards
 - Normal loading is quiet. Timeout diagnostics include the current filename, phase, helper PID and elapsed time. Recovery remains bounded, with cancellation bypassing retries.
 
 ## Release validation
+
+The n900i conversion stall was reproduced at 48 kHz before the 1.1.1 fix: 84 of 360 concurrent renders failed to reach EOF (21 affected filenames, original/unlocked copies, two passes). Direct position checks confirmed that Yamaha continued returning PCM after its millisecond position stopped below the reported length. Most deficits were 1 ms; `n900i_91.mld` stopped 6 ms short and `n900i_98.mld` 9 ms short. The apparent random file depended on batch ordering, rather than a blocked library call.
+
+After the fix, all 720 bridge renders passed: 180 files including both folders, two passes at each of 48 and 44.1 kHz, eight concurrent workers. Packaged x64 and Win32 foobar hosts each passed 360 conversion/integrity decodes at 48 kHz with eight concurrent decoders, including seeks past EOF and back to the start. These tests exercise the actual input decoder services used by conversion and integrity testing; they do not automate the separate Converter or Input Validator user interfaces.
+
+The x64 MA7 bridge regression suite also passed, including a targeted n900i MLD case for exact/native seeks and finite repeats at both rates. Earlier runs of that expanded suite hit intermittent MA7 timeouts at the engine-reset stage during rapid reopen sequences; the existing 30-second request limit correctly discarded the helper. The exact trigger is unresolved. A passing rerun does not establish consistent reset behavior, and the strict tests remain unchanged. This bounded reset failure is distinct from the reproduced endless-PCM EOF bug.
+
+The packaged feature suites passed on x64 and Win32, covering both engines/rates, exact/native seeks, metadata and the original loop examples. The universal archive passed architecture/content and symbol-path validation. The standard host suites did not fully pass this time: x64 reported `Temporary volume alone has no effect`, and Win32 reported `Saved volume not applied to a new decoder` with a substantial PCM mismatch. These are in the previously documented volume/live-control test area; no assertions were relaxed. The successful n900i corpus results do not imply those outstanding issues are resolved.
 
 Version 1.1 validation (2026-09-15):
 

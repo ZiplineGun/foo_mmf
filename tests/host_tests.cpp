@@ -8,6 +8,8 @@
 #include <commctrl.h>
 #include <tlhelp32.h>
 #include <set>
+#include <filesystem>
+#include <random>
 #include <foobar2000/SDK/console_manager.h>
 #include "freeze_helper.hpp"
 
@@ -181,6 +183,45 @@ static void featureTests(const std::wstring& root,preferences_page_instance::ptr
     log("PASS consecutive host decodes of all three loop examples have no 250 ms tail gap");
     instance->reset();instance->apply();expectedRate=44100;
 }
+static void corpusTests(const std::wstring& root,preferences_page_instance::ptr instance) {
+    HWND prefs=instance->get_wnd();SendDlgItemMessageW(prefs,IDC_ENGINE,CB_SETCURSEL,2,0);
+    SendDlgItemMessageW(prefs,IDC_SAMPLE_RATE,CB_SETCURSEL,1,0);instance->apply();
+    std::vector<std::wstring> files;
+    for(const auto& entry:std::filesystem::recursive_directory_iterator(root+L"\\test files\\n900i"))
+        if(entry.is_regular_file()&&!_wcsicmp(entry.path().extension().c_str(),L".mld")) files.push_back(entry.path().wstring());
+    require(!files.empty(),"No n900i MLD fixtures");std::mt19937 random(25);std::shuffle(files.begin(),files.end(),random);
+    std::atomic<size_t> next{0};std::atomic<unsigned> failures{0};std::mutex output;
+    std::vector<std::thread> threads;
+    for(unsigned worker=0;worker<8;++worker) threads.emplace_back([&] {
+        for(;;) {
+            size_t index=next.fetch_add(1);if(index>=files.size()*2) break;
+            auto& path=files[index%files.size()];
+            unsigned flags=index<files.size()?0:input_flag_testing_integrity|input_flag_no_looping;
+            try {
+                auto decoder=openDecoder(path,flags);file_info_impl info;decoder->get_info(0,info,fb2k::noAbort);
+                audio_chunk_impl chunk;uint64_t frames=0;ULONGLONG began=GetTickCount64();
+                while(decoder->run(chunk,fb2k::noAbort)) {
+                    require(chunk.get_sample_rate()==48000&&chunk.get_channels()==2,"Corpus output format differs");
+                    frames+=chunk.get_sample_count();
+                    require(double(frames)/48000<=info.get_length()+11,"Corpus decoder never reached EOF");
+                    require(GetTickCount64()-began<120000,"Corpus render exceeded test deadline");
+                }
+                require(frames>0,"Corpus render is empty");
+                // Exercise the validator's seeks into and back from EOF.
+                decoder->seek(info.get_length()+10,fb2k::noAbort);require(!decoder->run(chunk,fb2k::noAbort),"Corpus seek beyond EOF returned audio");
+                decoder->seek(0,fb2k::noAbort);require(decoder->run(chunk,fb2k::noAbort),"Corpus seek from EOF failed");
+                {std::lock_guard<std::mutex> lock(output);fprintf(logFile,"OK corpus %zu %s %.3f s\n",index+1,flags?"integrity":"conversion",double(frames)/48000);fflush(logFile);}
+            } catch(const std::exception& e) {
+                ++failures;std::lock_guard<std::mutex> lock(output);
+                fprintf(logFile,"FAIL corpus %zu %s: %s\n",index+1,pfc::stringcvt::string_utf8_from_wide(path.c_str()).get_ptr(),e.what());fflush(logFile);
+            }
+        }
+    });
+    for(auto& thread:threads) thread.join();
+    require(failures==0,"Concurrent corpus conversion/integrity tests failed");
+    log("PASS all n900i files, eight concurrent decoders, conversion/integrity EOF and seeks");
+    instance->reset();instance->apply();
+}
 static void runTests() {
     std::wstring root;
     try {
@@ -214,8 +255,9 @@ static void runTests() {
         require(midiEntry->is_our_path("tone.mid","mid")&&midiEntry->is_our_path("tone.midi","midi"),"MIDI must always be registered");
         accessibleName(prefs,IDC_VOLUME,L"volume");
         log("PASS preferences, accessible labels and always-on MIDI");
-        if(GetEnvironmentVariableW(L"FOO_MMF_TEST_FEATURES",nullptr,0)) {
-            featureTests(root,instance);DestroyWindow(prefs);instance.release();decoderEntry.release();mldEntry.release();midiEntry.release();
+        if(GetEnvironmentVariableW(L"FOO_MMF_TEST_FEATURES",nullptr,0)||GetEnvironmentVariableW(L"FOO_MMF_TEST_CORPUS",nullptr,0)) {
+            if(GetEnvironmentVariableW(L"FOO_MMF_TEST_CORPUS",nullptr,0)) corpusTests(root,instance);else featureTests(root,instance);
+            DestroyWindow(prefs);instance.release();decoderEntry.release();mldEntry.release();midiEntry.release();
             log("PASS ALL HOST TESTS");fclose(logFile);logFile=nullptr;standard_commands::main_exit();return;
         }
         if(GetEnvironmentVariableW(L"FOO_MMF_TEST_RECOVERY",nullptr,0)) {
