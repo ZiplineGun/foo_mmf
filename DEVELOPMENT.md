@@ -2,7 +2,7 @@
 
 ## Release scope
 
-Version 1.1.1 provides independent MMF, MLD and MIDI decoders for foobar2000 2.x. It supports Yamaha MA2, MA3, MA5 and MA7 songs through user-supplied MA7 or MA5 libraries. MA4 and MA6 are not target generations. Decoder priority is set under Preferences > Playback > Decoding.
+Version 1.1.2 provides independent MMF, MLD and MIDI decoders for foobar2000 2.x. It supports Yamaha MA2, MA3, MA5 and MA7 songs through user-supplied MA7 or MA5 libraries. MA4 and MA6 are not target generations. Decoder priority is set under Preferences > Playback > Decoding.
 
 The component runs in x86 or x64 foobar; ARM64EC foobar uses the x64 component. Yamaha libraries always run in a separate x86 helper. Both installers use Program Files (x86) on x64/ARM64 Windows and Program Files on 32-bit Windows. Explicit library folders override discovery.
 
@@ -14,6 +14,7 @@ The component runs in x86 or x64 foobar; ARM64EC foobar uses the x64 component. 
 | `src/ui.cpp`, `src/component.rc` | Preferences and accessible playback controls |
 | `src/bridge.*`, `src/protocol.hpp`, `src/loading.hpp` | Process isolation, IPC and deadlines |
 | `src/helper.cpp`, `src/yamaha.*` | x86 synthesis host and engine adapters |
+| `src/ma5_clock.hpp`, `src/smaf_audio.hpp` | MA5 scheduler timing and private audio-only SMAF copies |
 | `src/midi.hpp` | In-memory MIDI effects filtering |
 | `src/metadata.hpp` | Bounded SMAF CNTI/OPDA text metadata reader |
 | `src/probe.cpp` | Standalone WAV renderer and loading benchmark |
@@ -57,11 +58,19 @@ After nominal song end, hold candidate silent blocks while confirming the existi
 
 Some MA7 MLD files stop reporting position 1..9 ms before their declared length while continuing to generate silence. Once position stops advancing within the final 10 ms, enter normal release-tail handling. Reset this position history on open, seek and repeat. This prevents endless conversion/integrity decoding; per-request timeouts alone cannot detect a helper that keeps returning valid PCM. MA5 retains its existing one-millisecond end tolerance.
 
+Both engines also track generated musical time independently of reported position. Each 10 ms PCM block advances this clock by the current tempo, using integer tenths of a millisecond. Reaching the declared length starts the existing release-tail handling even if Yamaha's position stops short or advances too slowly during offline rendering. MA5 still confirms its position near the end. Reset the generated clock on open/repeat and anchor it to the requested musical position on native seek. Exact conversion seeks advance it through the PCM they discard. The final finite repeat's fade also follows generated time when reported position lags, reaching zero at the endpoint.
+
+For MA5, remove top-level graphics tracks from the helper's private SMAF copy after validating chunk bounds and the original checksum. Preserve audio and metadata chunks, update the container length/checksum and leave source files untouched. Malformed or unrecognized containers pass through unchanged. Graphics-only endpoints must not stop buffered audio.
+
+MA5's multimedia scheduler can switch from audio position to a Windows clock near song end. Redirect only the loaded MMS module's named `timeGetTime` import to a synchronized helper-local clock: it advances 10 ms per generated PCM block and stays frozen between requests. Loading, seeking, repeats and teardown resume elapsed time without moving the clock backward. Restore the import before unloading the DLL. This keeps playback buffering from stopping notes prematurely; MA7 and IPC timeout clocks are unchanged. Both engines still synthesize natively at the requested sample rate.
+
 ## Validation and remaining work
 
 Playback and default discovery have been confirmed in x86, x64 and ARM64EC foobar. NVDA accessibility has been confirmed. Automated tests cover audio, seeking, effects, helper reuse, cancellation, MA5 recovery and native UI controls. See DEVELOPMENT_NOTES.md for test prerequisites and commands.
 
 Broader song/library compatibility and controlled listening comparisons remain useful future work. The intermittent MA5 stall is handled by process recovery; its internal cause is unresolved. Keep both development documents current when changing behavior or validation coverage.
+
+The four graphics-bearing MMF endpoint regressions finish with the generated-time safeguard. Validate the BoyMeetsGirl-Q final notes using paced playback, including pauses between PCM requests; fast conversion alone did not reproduce the reported cutoff. User listening confirmed that the original fast renders played the ending correctly at both rates.
 
 Repeated real-host runs can intermittently fail strict PCM comparisons around volume and live-control transitions. Both architectures also produced passing runs; the direct bridge suite passed. The cause is unresolved and the assertions remain strict. See DEVELOPMENT_NOTES.md before interpreting a single passing run as complete validation.
 

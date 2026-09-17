@@ -1,4 +1,4 @@
-# foo_mmf 1.1.1
+# foo_mmf 1.1.2
 
 Yamaha SMAF playback for foobar2000 2.x on Windows 10 or later. The component uses original, user-supplied Yamaha MA7 or MA5 synthesizer libraries in a separate 32-bit process.
 
@@ -23,6 +23,8 @@ The older MA5 libraries reject modern Windows version numbers. The component app
 ## Playback and settings
 
 Version 1.1.1 fixes conversions and decoder tests that never finished for some MLD files, including n900i ringtones. Yamaha can stop reporting position just short of the declared length; the component now recognizes that endpoint and finishes after the normal release tail.
+
+Version 1.1.2 extends this fix to MMF files whose reported position stalls before the end. It also works around MA5 cutting off the final notes of some graphics-bearing songs during playback. Native 44,100 and 48,000 Hz synthesis is preserved; source files are unchanged.
 
 - **Sample rate**, under **File > Preferences > Playback > Input > Yamaha SMAF**, selects **44,100 Hz** or **48,000 Hz**, defaulting to **48,000 Hz**. Both MA7 and both tested MA5 releases support these rates. The selected rate applies to every file when playback or conversion starts a new session. Foobar may still display a previously cached rate; use **Properties > Tools > Reload info from file(s)** on affected tracks to refresh it.
 - MMF text metadata, including title, artist, composer and copyright, appears in foobar's tags when present. Files already in the library may need **Properties > Tools > Reload info from file(s)** to refresh cached metadata. Tags are read only; source files are unchanged.

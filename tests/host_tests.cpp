@@ -206,6 +206,33 @@ static void featureTests(const std::wstring& root,preferences_page_instance::ptr
     log("PASS consecutive host decodes of all three loop examples have no 250 ms tail gap");
     instance->reset();instance->apply();expectedRate=44100;
 }
+static void endpointTests(const std::wstring& root,preferences_page_instance::ptr instance) {
+    HWND prefs=instance->get_wnd();
+    SetDlgItemTextW(prefs,IDC_MA5_FOLDER,(root+L"\\newer_ma5").c_str());
+    for(int engine:{1,2}) for(int rateIndex:{0,1}) {
+        SendDlgItemMessageW(prefs,IDC_ENGINE,CB_SETCURSEL,engine,0);
+        SendDlgItemMessageW(prefs,IDC_SAMPLE_RATE,CB_SETCURSEL,rateIndex,0);instance->apply();
+        const unsigned rate=rateIndex?48000:44100;
+        for(auto name:{L"BoyMeetsGirl-Q-UTF8EN.mmf",L"BoyMeetsGirl-QQ-UTF8EN.mmf",L"ChuteDePluie-Q-UTF8EN.mmf",L"EatMyHeart-QQ-UTF8EN.mmf"}) {
+            for(unsigned flags:{0u,unsigned(input_flag_testing_integrity|input_flag_no_looping),unsigned(input_flag_playback)}) {
+                auto decoder=openDecoder(root+L"\\test files\\"+name,flags);file_info_impl info;decoder->get_info(0,info,fb2k::noAbort);
+                require(info.info_get("synthesizer")&&!strcmp(info.info_get("synthesizer"),engine==1?"Yamaha MA5":"Yamaha MCP-MA7"),"Endpoint test used the wrong engine");
+                audio_chunk_impl chunk;uint64_t frames=0;auto began=GetTickCount64();
+                while(decoder->run(chunk,fb2k::noAbort)) {
+                    require(chunk.get_sample_rate()==rate&&chunk.get_channels()==2,"Endpoint output format differs");frames+=chunk.get_sample_count();
+                    require(double(frames)/rate<info.get_length()+11,"Endpoint host decoder never reached EOF");
+                    require(GetTickCount64()-began<120000,"Endpoint host test deadline exceeded");
+                }
+                require(std::abs(double(frames)/rate-info.get_length())<0.15,"Endpoint host duration is incorrect");
+                decoder->seek(info.get_length()+10,fb2k::noAbort);require(!decoder->run(chunk,fb2k::noAbort),"Endpoint seek past EOF returned audio");
+                decoder->seek(0,fb2k::noAbort);require(decoder->run(chunk,fb2k::noAbort),"Endpoint seek back from EOF failed");
+                fprintf(logFile,"PASS endpoint %s engine %d rate %u flags %u duration %.3f\n",pfc::stringcvt::string_utf8_from_wide(name).get_ptr(),engine,rate,flags,double(frames)/rate);fflush(logFile);
+            }
+        }
+    }
+    instance->reset();instance->apply();
+    log("PASS endpoint files: both engines/rates, playback/conversion/integrity and EOF seeks");
+}
 static void corpusTests(const std::wstring& root,preferences_page_instance::ptr instance) {
     HWND prefs=instance->get_wnd();SendDlgItemMessageW(prefs,IDC_ENGINE,CB_SETCURSEL,2,0);
     SendDlgItemMessageW(prefs,IDC_SAMPLE_RATE,CB_SETCURSEL,1,0);instance->apply();
@@ -278,8 +305,9 @@ static void runTests() {
         require(midiEntry->is_our_path("tone.mid","mid")&&midiEntry->is_our_path("tone.midi","midi"),"MIDI must always be registered");
         accessibleName(prefs,IDC_VOLUME,L"volume");
         log("PASS preferences, accessible labels and always-on MIDI");
-        if(GetEnvironmentVariableW(L"FOO_MMF_TEST_FEATURES",nullptr,0)||GetEnvironmentVariableW(L"FOO_MMF_TEST_CORPUS",nullptr,0)) {
-            if(GetEnvironmentVariableW(L"FOO_MMF_TEST_CORPUS",nullptr,0)) corpusTests(root,instance);else featureTests(root,instance);
+        if(GetEnvironmentVariableW(L"FOO_MMF_TEST_FEATURES",nullptr,0)||GetEnvironmentVariableW(L"FOO_MMF_TEST_CORPUS",nullptr,0)||GetEnvironmentVariableW(L"FOO_MMF_TEST_ENDPOINTS",nullptr,0)) {
+            if(GetEnvironmentVariableW(L"FOO_MMF_TEST_ENDPOINTS",nullptr,0)) endpointTests(root,instance);
+            else if(GetEnvironmentVariableW(L"FOO_MMF_TEST_CORPUS",nullptr,0)) corpusTests(root,instance);else featureTests(root,instance);
             DestroyWindow(prefs);instance.release();decoderEntry.release();mldEntry.release();midiEntry.release();
             log("PASS ALL HOST TESTS");fclose(logFile);logFile=nullptr;standard_commands::main_exit();return;
         }

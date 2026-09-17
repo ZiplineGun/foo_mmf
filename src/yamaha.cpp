@@ -1,5 +1,7 @@
 #include "yamaha.hpp"
 #include "midi.hpp"
+#include "smaf_audio.hpp"
+#include "ma5_clock.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -38,6 +40,7 @@ Yamaha::Yamaha(const std::wstring& directory,Engine engine,Progress progress,uns
     mms_=LoadLibraryExW((directory+L"\\"+mmsName(engine_)).c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     hardware_=LoadLibraryExW((directory+L"\\"+hardwareName(engine_)).c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     if(!mms_||!hardware_) throw std::runtime_error("Cannot load the selected Yamaha MMS/hardware DLLs or their dependencies");
+    if(engine_==Engine::ma5) ma5Clock_=std::make_unique<Ma5Clock>(mms_);
     initialize();
 }
 void Yamaha::initialize() {
@@ -91,7 +94,8 @@ void Yamaha::open(std::vector<uint8_t> data,unsigned repeats,unsigned fadeMs,int
     }
     if(data.empty()||data.size()>maxFileBytes||repeats>254||fadeMs>30000) throw std::runtime_error("Invalid song or playback settings");
     data_=enableReverb&&enableChorus?std::move(data):midiEffects(data,enableReverb,enableChorus); repeats_=repeats; repeatsLeft_=repeats; fadeMs_=fadeMs;
-    tailFrames_=quietFrames_=ma5PollBlocks_=0;ma5Position_=0;lastPosition_=-1; ending_=finished_=false;
+    if(engine_==Engine::ma5) data_=audioOnlySmaf(std::move(data_));
+    tailFrames_=quietFrames_=ma5PollBlocks_=0;ma5Position_=0;renderedTenthsMs_=0;lastPosition_=-1; ending_=finished_=false;
     using Load=int(__cdecl*)(const void*,unsigned,unsigned,unsigned);
     progress(LoadStage::load);
     handle_=engine_==Engine::ma5?
@@ -115,6 +119,7 @@ void Yamaha::open(std::vector<uint8_t> data,unsigned repeats,unsigned fadeMs,int
     progress(LoadStage::controls);controls(100,0,volume);
     progress(LoadStage::start);
     checked("Start",melodyApi<One>("Start")(handle_)); started_=true;
+    if(ma5Clock_) ma5Clock_->freeze();
 }
 int Yamaha::songControl(unsigned command,void* value) {
     if(engine_!=Engine::ma5) return control_(handle_,command,value);
@@ -137,6 +142,7 @@ void Yamaha::controls(int tempo,int transpose,int volume) {
     tempo_=tempo; transpose_=transpose; volume_=volume;
 }
 void Yamaha::seek(uint64_t milliseconds) {
+    if(ma5Clock_) ma5Clock_->realtime();
     heldTail_.clear();readyAudio_.clear();
     if(milliseconds>=uint64_t(length_)*(repeats_+1)) {finished_=true;return;}
     int stopped=melodyApi<One>("Stop")(handle_);
@@ -147,7 +153,8 @@ void Yamaha::seek(uint64_t milliseconds) {
     checked("SeekReady",melodyApi<int(__cdecl*)(int,int)>("WaitReady")(handle_,-1));
     controls(tempo_,transpose_,volume_);
     checked("SeekStart",melodyApi<One>("Start")(handle_)); started_=true;
-    ma5Position_=position;ma5PollBlocks_=0;lastPosition_=-1;
+    if(ma5Clock_) ma5Clock_->freeze();
+    ma5Position_=position;renderedTenthsMs_=uint64_t(position)*10;ma5PollBlocks_=0;lastPosition_=-1;
     ending_=finished_=false;tailFrames_=quietFrames_=0;
 }
 int Yamaha::positionMs() {return checked("Position",songControl(0x1111002b,nullptr));}
@@ -181,6 +188,11 @@ unsigned Yamaha::render(float* interleaved) {
         api<void(__cdecl*)(int16_t*,int16_t*,unsigned)>("MaSound_Generate")(l.data(),r.data(),frames_);
         std::copy(l.begin(),l.end(),left.begin());std::copy(r.begin(),r.end(),right.begin());
     } else checked("Generate",generate_(planes,frames_));
+    if(ma5Clock_) ma5Clock_->advance(10);
+    // Every block is 10 ms at either rate. Integrate musical time independently
+    // of Position, which can stop short or advance on wall time during offline
+    // rendering even though Generate keeps supplying valid PCM.
+    if(!ending_) renderedTenthsMs_+=tempo_;
     int position;
     if(engine_==Engine::ma5) {
         // The 2004 MMS dispatcher polls a worker thread. Querying it for every
@@ -188,7 +200,7 @@ unsigned Yamaha::render(float* interleaved) {
         // always confirm the actual position near EOF before ending/repeating.
         if(!ending_) {
             ma5Position_+=double(frames_)*1000/rate_*tempo_/100;
-            if(++ma5PollBlocks_>=10||ma5Position_>=length_-1) {ma5Position_=positionMs();ma5PollBlocks_=0;}
+            if(++ma5PollBlocks_>=10||ma5Position_>=length_-1||renderedTenthsMs_>=uint64_t(length_)*10) {ma5Position_=positionMs();ma5PollBlocks_=0;}
         }
         position=static_cast<int>(ma5Position_);
     } else position=positionMs();
@@ -199,23 +211,31 @@ unsigned Yamaha::render(float* interleaved) {
     const bool stoppedNearEnd=engine_==Engine::ma7&&position==lastPosition_&&position>=static_cast<int>(length_)-10;
     lastPosition_=position;
     if(position>=static_cast<int>(length_)-(engine_==Engine::ma5?1:0)||stoppedNearEnd) ending_=true;
+    // This only starts normal tail handling after the declared musical length;
+    // it neither stops the engine nor discards notes and audible release tails.
+    if(renderedTenthsMs_>=uint64_t(length_)*10) ending_=true;
     int peak=0;
     for(unsigned i=0;i<frames_;++i) {
         const int l=std::clamp(left[i],-32768,32767), r=std::clamp(right[i],-32768,32767);
         peak=std::max({peak,std::abs(l),std::abs(r)});
         float gain=1.0f;
-        if(repeats_&&!repeatsLeft_&&fadeMs_) gain=std::clamp(float(int64_t(length_)-position)/fadeMs_,0.0f,1.0f);
+        if(repeats_&&!repeatsLeft_&&fadeMs_) {
+            const int64_t fadePosition=std::max(int64_t(position),int64_t(renderedTenthsMs_/10));
+            gain=ending_?0.0f:std::clamp(float(int64_t(length_)-fadePosition)/fadeMs_,0.0f,1.0f);
+        }
         interleaved[i*2]=l/32768.0f*gain; interleaved[i*2+1]=r/32768.0f*gain;
     }
     if(ending_) {
         if(repeatsLeft_) {
+            if(ma5Clock_) ma5Clock_->realtime();
             int stopped=melodyApi<One>("Stop")(handle_);
             if(stopped!=-8) checked("RepeatStop",stopped);
             checked("RepeatSeek",melodyApi<int(__cdecl*)(int,int)>("Seek")(handle_,0));
             checked("RepeatReady",melodyApi<int(__cdecl*)(int,int)>("WaitReady")(handle_,-1));
             controls(tempo_,transpose_,volume_);
             checked("RepeatStart",melodyApi<One>("Start")(handle_));
-            ma5Position_=0;ma5PollBlocks_=0;lastPosition_=-1;
+            if(ma5Clock_) ma5Clock_->freeze();
+            ma5Position_=0;renderedTenthsMs_=0;ma5PollBlocks_=0;lastPosition_=-1;
             --repeatsLeft_; ending_=false; return frames_;
         }
         tailFrames_+=frames_;
@@ -232,6 +252,7 @@ unsigned Yamaha::render(float* interleaved) {
     return frames_;
 }
 void Yamaha::closeSong() {
+    if(ma5Clock_) ma5Clock_->realtime();
     heldTail_.clear();readyAudio_.clear();
     if(started_) {int result=melodyApi<One>("Stop")(handle_);if(result!=-8) checked("Stop",result);started_=false;}
     if(opened_) {checked("Close",melodyApi<One>("Close")(handle_));opened_=false;}
@@ -248,12 +269,14 @@ void Yamaha::terminate() {
     initialized_=emulator_=false;
 }
 void Yamaha::close() noexcept {
+    if(ma5Clock_) ma5Clock_->realtime();
     try {
         if(started_) melodyApi<One>("Stop")(handle_);
         if(opened_) melodyApi<One>("Close")(handle_);
         if(handle_) melodyApi<One>("Unload")(handle_);
         terminate();
     } catch(...) {}
+    ma5Clock_.reset();
     if(hardware_) FreeLibrary(hardware_);
     if(mms_) FreeLibrary(mms_);
     if(module_) FreeLibrary(module_);

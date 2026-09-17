@@ -9,8 +9,10 @@
 #include "loading.hpp"
 #include <functional>
 #include <deque>
+#include <memory>
 
 namespace smaf {
+class Ma5Clock;
 constexpr uint32_t sampleRate = 44100;
 constexpr uint32_t blockFrames = 441;
 constexpr uint32_t maxBlockFrames = 480;
@@ -43,6 +45,7 @@ private:
     Progress progress_;
     void progress(LoadStage stage){if(progress_) progress_(stage);}
     HMODULE mms_{}, hardware_{};
+    std::unique_ptr<Ma5Clock> ma5Clock_;
     DLL_DIRECTORY_COOKIE directoryCookie_{};
     bool emulator_{}, initialized_{}, opened_{}, started_{};
     int handle_{};
@@ -53,6 +56,7 @@ private:
     bool quietBlock_{};
     std::deque<std::vector<float>> heldTail_,readyAudio_;
     double ma5Position_{};
+    uint64_t renderedTenthsMs_{};
     unsigned ma5PollBlocks_{};
     int lastPosition_=-1;
     std::vector<uint8_t> data_;
