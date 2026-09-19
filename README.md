@@ -22,13 +22,9 @@ The older MA5 libraries reject modern Windows version numbers. The component app
 
 ## Playback and settings
 
-Version 1.1.1 fixes conversions and decoder tests that never finished for some MLD files, including n900i ringtones. Yamaha can stop reporting position just short of the declared length; the component now recognizes that endpoint and finishes after the normal release tail.
-
-Version 1.1.2 extends this fix to MMF files whose reported position stalls before the end. It also works around MA5 cutting off the final notes of some graphics-bearing songs during playback. Native 44,100 and 48,000 Hz synthesis is preserved; source files are unchanged.
-
 - **Sample rate**, under **File > Preferences > Playback > Input > Yamaha SMAF**, selects **44,100 Hz** or **48,000 Hz**, defaulting to **48,000 Hz**. Both MA7 and both tested MA5 releases support these rates. The selected rate applies to every file when playback or conversion starts a new session. Foobar may still display a previously cached rate; use **Properties > Tools > Reload info from file(s)** on affected tracks to refresh it.
-- MMF text metadata, including title, artist, composer and copyright, appears in foobar's tags when present. Files already in the library may need **Properties > Tools > Reload info from file(s)** to refresh cached metadata. Tags are read only; source files are unchanged.
-- Supports supplied MA2, MA3, MA5 and MA7 samples, MLD, and standard MIDI.
+- MMF text metadata, including title, artist, composer and copyright, appears in foobar's tags when present. Tags are read only; source files are unchanged.
+- Supports supplied MA2, MA3, MA5 and MA7 files in .mmf format, MLD, and standard MIDI.
 - **Default Yamaha volume**, in preferences, ranges from **0 to 127** and defaults to **64**. It controls the synthesizer before its PCM output clips. Lower it for loud songs: reducing foobar's own volume cannot repair clipping that has already occurred inside Yamaha. Some files may need a value below the default.
 - **Enable Yamaha reverb** and **Enable Yamaha chorus for MID and MIDI files** are independent preferences, both **on** by default, preserving the file's effect settings. Uncheck either to disable that effect. Changes apply when a file is next opened and also apply to conversion. MMF/MLD effects are unchanged. Disabled effect sends are suppressed in memory; source files are never edited.
 - **View > SMAF control** has labelled spin boxes for tempo (**70-130%**), transposition (**-12 to +12 semitones**) and Yamaha volume (**0-127**). Type a value or use Up/Down; valid changes apply after **350 ms** without further edits. There is no Apply button. Incomplete or out-of-range values leave the previous settings active.
@@ -37,11 +33,11 @@ Version 1.1.2 extends this fix to MMF files whose reported position stalls befor
 - Preferences provide **0-254** extra whole-song repeats and a **0-30 second** fade over the end of the last repeated pass. Defaults are no extra repeats and a five-second repeat fade. Foobar's no-loop flag disables extra repeats.
 - Ordinary playback preserves the natural release/reverb tail until it settles, with a ten-second tail limit. End positions retain 10 ms rendering resolution. Metadata reports nominal song duration; audible release tails can extend playback.
 
-Playback uses Yamaha's fast native seek without restarting the helper. Native seeks restore musical position with millisecond precision; they do not reproduce the exact waveform or accumulated effect tail of an uninterrupted render. Conversion and analysis keep sample-accurate seeking by rendering skipped audio inside the helper in batches.
+Playback uses Yamaha's fast native seek without restarting the helper. Native seeks restore musical position with millisecond precision; they do not reproduce the exact waveform or accumulated effect tail of an uninterrupted render. 
 
-The component keeps up to two idle helpers and their Yamaha DLLs loaded for reuse across tracks and metadata reads. Concurrent decoders get separate helpers. Idle helpers do not render audio and close when foobar exits; failed or cancelled helpers are discarded. Chip and effect state is reinitialized between files to prevent one song affecting the next.
 
-MA5 can occasionally freeze inside Yamaha's libraries. If loading makes no progress for **five seconds**, the component terminates that helper and retries once in a fresh process. If the retry also stalls, it uses MA7 when available; otherwise it reports an error so the file scan can continue. **View > Console** records the filename, stalled stage, elapsed time and recovery action. Cancellation remains available during the wait. This also covers metadata reads and conversion opens. A complete helper request has a 30-second limit even if it reports intermediate progress.
+MA5 can occasionally freeze inside Yamaha's libraries. If loading makes no progress for **five seconds**, the component terminates that helper and retries once in a fresh process. If the retry also stalls, it uses MA7 when available; otherwise it reports an error so the file scan can continue. **View > Console** records the filename, stalled stage, elapsed time and recovery action. Cancellation remains available during the wait. This also covers metadata reads and conversion opens. A complete helper request has a 30-second limit even if it reports intermediate progress. Note that this issue was also present in MID radio player which would sometimes fail to load files.
+
 
 ## Build and test
 
