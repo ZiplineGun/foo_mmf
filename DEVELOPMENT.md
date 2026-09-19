@@ -72,6 +72,8 @@ Broader song/library compatibility and controlled listening comparisons remain u
 
 The four graphics-bearing MMF endpoint regressions finish with the generated-time safeguard. Validate the BoyMeetsGirl-Q final notes using paced playback, including pauses between PCM requests; fast conversion alone did not reproduce the reported cutoff. User listening confirmed that the original fast renders played the ending correctly at both rates.
 
+The user subsequently confirmed the 1.1.2 MA5 ending and EOF fixes in foobar. Release preparation preserves that implementation and incorporates the revised README in the universal package.
+
 Repeated real-host runs can intermittently fail strict PCM comparisons around volume and live-control transitions. Both architectures also produced passing runs; the direct bridge suite passed. The cause is unresolved and the assertions remain strict. See DEVELOPMENT_NOTES.md before interpreting a single passing run as complete validation.
 
 A PCM inequality does not by itself establish audible corruption. Use `Host-Test.ps1 -CapturePcm` to retain unmodified reference/actual WAVs on a comparison failure; it also repeats the volume-control checks. Describe audible symptoms only after inspecting a capture, and label deliberately different volume renders as illustrations rather than reproductions.
