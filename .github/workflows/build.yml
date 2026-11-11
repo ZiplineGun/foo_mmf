@@ -1,0 +1,87 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # foobar2000 SDK 2025-03-07 (CMake mirror). The repo's .gitignore excludes /sdk/,
+  # so the SDK is fetched here and copied to sdk/ as the vcxproj files expect.
+  # Pin SDK_REF to a commit SHA once the first build is green.
+  SDK_REPO: hyperblast/foosdk
+  SDK_REF: master
+
+jobs:
+  build:
+    # windows-latest / windows-2025 also point at the VS 2026 image since June 2026.
+    # The image ships only the v145 toolset, which is what this repo targets.
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout foo_mmf
+        uses: actions/checkout@v4
+
+      - name: Checkout foobar2000 SDK
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SDK_REPO }}
+          ref: ${{ env.SDK_REF }}
+          path: _foosdk
+
+      - name: Place SDK at sdk/
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Copy-Item -Recurse -Force _foosdk\sdk sdk
+          foreach ($p in 'sdk\pfc\pfc.vcxproj','sdk\foobar2000\SDK\foobar2000_SDK.vcxproj',
+                         'sdk\foobar2000\foobar2000_component_client\foobar2000_component_client.vcxproj',
+                         'sdk\foobar2000\shared\shared-Win32.lib','sdk\foobar2000\shared\shared-x64.lib',
+                         'sdk\sdk-license.txt','sdk\pfc\pfc-license.txt') {
+            if (-not (Test-Path -LiteralPath $p)) { throw "Missing SDK file: $p" }
+          }
+          Get-Content sdk\sdk-readme.html -TotalCount 15 | Select-String 'version'
+
+      - name: Show toolchain
+        shell: powershell
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          & $vswhere -latest -products '*' -property catalog_productDisplayVersion
+
+      - name: Package (x86 + x64 component, x86 helper)
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File package.ps1
+
+      - name: Validate package
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools\Test-Package.ps1
+
+      - name: Upload component
+        uses: actions/upload-artifact@v4
+        with:
+          name: foo_mmf.fb2k-component
+          path: out/foo_mmf.fb2k-component
+          if-no-files-found: error
+
+      # Compile-only check of the test binaries. They need Yamaha libraries and
+      # sample songs to run, so they are not executed here. Kept non-fatal so the
+      # main result above stays clear.
+      - name: Compile test projects (x64, not run)
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($p in 'bridge_tests','metadata_tests','smaf_audio_tests','end_tests','load_stress','render_stress','foo_mmf_tests') {
+            Write-Host "=== $p"
+            & .\build.ps1 -Project "$p.vcxproj" -Platform x64
+          }
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build/last-build.log
+          if-no-files-found: ignore
