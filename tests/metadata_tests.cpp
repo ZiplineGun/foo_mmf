@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "../src/metadata.hpp"
+#include "spf_checks.hpp"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -39,6 +40,7 @@ int wmain(int argc,wchar_t** argv) {
         std::mt19937 random(17);
         for(unsigned n=0;n<10000;++n){auto fuzz=input;for(unsigned j=0;j<4;++j) fuzz[random()%fuzz.size()]=uint8_t(random());smaf::readMetadata(fuzz);}
         std::cout<<"PASS metadata encodings, bounds, escapes, malformed input and source preservation\n";
+        spf_checks::run();std::cout<<"PASS SPF content detection, bounds and Phrase volume mapping\n";
         if(argc==2) {
             unsigned count=0;
             for(auto& entry:std::filesystem::directory_iterator(argv[1])) {

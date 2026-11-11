@@ -15,7 +15,7 @@ Read DEVELOPMENT.md and DEVELOPMENT_NOTES.md before changes. Keep both current w
 
 - Yamaha is x86-only and stays in the helper. Never pass pointers over IPC. Keep MA7 and MA5 adapter conventions separate and verify changes with rendered audio.
 - Default library folders use Program Files (x86) on x64/ARM64 Windows and Program Files on 32-bit Windows. Explicit saved paths override discovery.
-- Supported generations are MA2, MA3, MA5 and MA7.
+- Supported generations are MA2, MA3, MA5 and MA7. SPF (SMAF Phrase) is MA7-only: detect it from the file contents, use `Mapi_Phrase_*` in `Mapi_SetMode(2)`, reinitialize when switching between Melody and Phrase mode, keep the song buffer alive until `Phrase_RemoveData`, never route SPF to MA5 or fall back to it, and ignore tempo/transposition.
 - Preserve the existing MA7 device reset and engine configuration. Fully reinitialize between songs to prevent effect-state leakage.
 - Apply `WinXPSP2VersionLie` only in the MA5 child's environment, never in foobar or persistent system settings.
 - Each active decoder exclusively owns its helper. Pool by folder and engine, retain at most two idle workers, and clear them at shutdown. Discard failed/cancelled workers.

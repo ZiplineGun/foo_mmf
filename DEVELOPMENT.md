@@ -2,7 +2,7 @@
 
 ## Release scope
 
-Version 1.1.2 provides independent MMF, MLD and MIDI decoders for foobar2000 2.x. It supports Yamaha MA2, MA3, MA5 and MA7 songs through user-supplied MA7 or MA5 libraries. MA4 and MA6 are not target generations. Decoder priority is set under Preferences > Playback > Decoding.
+Version 1.1.2 provides independent MMF, MLD, MIDI and SPF decoders for foobar2000 2.x. It supports Yamaha MA2, MA3, MA5 and MA7 songs through user-supplied MA7 or MA5 libraries; SPF (SMAF Phrase) is MA7-only. MA4 and MA6 are not target generations. Decoder priority is set under Preferences > Playback > Decoding.
 
 The component runs in x86 or x64 foobar; ARM64EC foobar uses the x64 component. Yamaha libraries always run in a separate x86 helper. Both installers use Program Files (x86) on x64/ARM64 Windows and Program Files on 32-bit Windows. Explicit library folders override discovery.
 
@@ -17,6 +17,7 @@ The component runs in x86 or x64 foobar; ARM64EC foobar uses the x64 component. 
 | `src/ma5_clock.hpp`, `src/smaf_audio.hpp` | MA5 scheduler timing and private audio-only SMAF copies |
 | `src/midi.hpp` | In-memory MIDI effects filtering |
 | `src/metadata.hpp` | Bounded SMAF CNTI/OPDA text metadata reader |
+| `src/spf.hpp` | SPF content detection and Phrase volume mapping (no Windows dependency) |
 | `src/probe.cpp` | Standalone WAV renderer and loading benchmark |
 | `tests/` | Bridge, real-host and loading stress tests |
 | `tools/` | Package validation and disposable host test launcher |
@@ -64,9 +65,15 @@ For MA5, remove top-level graphics tracks from the helper's private SMAF copy af
 
 MA5's multimedia scheduler can switch from audio position to a Windows clock near song end. Redirect only the loaded MMS module's named `timeGetTime` import to a synchronized helper-local clock: it advances 10 ms per generated PCM block and stays frozen between requests. Loading, seeking, repeats and teardown resume elapsed time without moving the clock backward. Restore the import before unloading the DLL. This keeps playback buffering from stopping notes prematurely; MA7 and IPC timeout clocks are unchanged. Both engines still synthesize natively at the requested sample rate.
 
+## SPF (SMAF Phrase)
+
+SPF is an `MMMD` container with an `MMMG` chunk and none of the MTR/ATR/GTR tracks. MA7's Melody API rejects it, so the helper detects it from the contents (`isSpf`) and uses `Mapi_Phrase_*`: `Mapi_SetMode(2)`, `CheckData`, `SetData` (slot 0, flag 1 with a retry using 0), `GetLength`, `SetVolume`, `Play(slot,1)`, then `GetPosition` per block. `Mapi_SetMode` is exclusive, so the engine is fully reinitialized whenever the next song needs the other mode (SPF to MMF, MMF to SPF) in addition to the usual reinitialization after a phrase. `SetData` does not copy: the song buffer stays untouched until `RemoveData`, which `closeSong` calls after `Stop` and before releasing the buffer.
+
+Repeats, native seeks and the generated-time end trigger follow the melody path: `Stop` (failure ignored once the phrase finished), `Seek` while stopped, `Play`. `GetPosition` can fail after the end and is then replaced by the last position. Tempo and transposition do not exist and are ignored (nominal clock stays 100 percent); volume is mapped by `phraseVolume`. The component forces MA7 for SPF and never falls back to MA5; the helper also refuses SPF on MA5. IPC is unchanged because the helper decides from the file bytes. The decoder for `.spf` is `Yamaha SPF decoder`; the MMF and SPF decoders accept either kind of SMAF container.
+
 ## Validation and remaining work
 
-Playback and default discovery have been confirmed in x86, x64 and ARM64EC foobar. NVDA accessibility has been confirmed. Automated tests cover audio, seeking, effects, helper reuse, cancellation, MA5 recovery and native UI controls. See DEVELOPMENT_NOTES.md for test prerequisites and commands.
+SPF playback has been exercised only against a simulated Phrase API (see DEVELOPMENT_NOTES.md) and has not been listened to with the real Yamaha MA7 libraries or inside foobar; the volume mapping is an unverified design choice. Playback and default discovery have been confirmed in x86, x64 and ARM64EC foobar for the other formats. NVDA accessibility has been confirmed. Automated tests cover audio, seeking, effects, helper reuse, cancellation, MA5 recovery and native UI controls. See DEVELOPMENT_NOTES.md for test prerequisites and commands.
 
 Broader song/library compatibility and controlled listening comparisons remain useful future work. The intermittent MA5 stall is handled by process recovery; its internal cause is unresolved. Keep both development documents current when changing behavior or validation coverage.
 

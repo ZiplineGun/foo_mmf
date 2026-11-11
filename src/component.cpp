@@ -1,12 +1,13 @@
 #include "component.hpp"
 #include "bridge.hpp"
 #include "metadata.hpp"
+#include "spf.hpp"
 #include <algorithm>
 #include <cstring>
 #include <memory>
 #include <mutex>
 
-DECLARE_COMPONENT_VERSION("Yamaha SMAF decoder","1.1.2","SMAF MA2/MA3/MA5/MA7, MLD and MIDI playback using user-supplied Yamaha MA7 or MA5 libraries.\nYamaha libraries run in an isolated x86 helper process.");
+DECLARE_COMPONENT_VERSION("Yamaha SMAF decoder","1.1.2","SMAF MA2/MA3/MA5/MA7, SPF (MA7 only), MLD and MIDI playback using user-supplied Yamaha MA7 or MA5 libraries.\nYamaha libraries run in an isolated x86 helper process.");
 VALIDATE_COMPONENT_FILENAME("foo_mmf.dll");
 
 namespace {
@@ -44,7 +45,7 @@ std::wstring helperPath() {
     if(slash==std::wstring::npos) throw exception_io_data("Cannot locate the component folder");
     return path.substr(0,slash+1)+L"smaf_helper.exe";
 }
-enum class Format {mmf,mld,midi};
+enum class Format {mmf,mld,midi,spf};
 template<Format format> class input_smaf : public input_stubs {
     file::ptr file_;
     std::vector<uint8_t> data_;
@@ -57,6 +58,7 @@ template<Format format> class input_smaf : public input_stubs {
     unsigned loadedRepeats_{};
     bool playback_{};
     bool pristine_=false;
+    bool spf_=false; // SMAF Phrase content: played through the MA7 Phrase API only
     std::vector<float> pending_;
     const char* codec_="SMAF";
     std::string path_;
@@ -84,11 +86,17 @@ template<Format format> class input_smaf : public input_stubs {
         pending_.clear();
         try {
             auto engine=settings_.engine;
-            if(engine==smaf::Engine::automatic) engine=smaf::engineAvailable(settings_.folder,smaf::Engine::ma7)?smaf::Engine::ma7:smaf::Engine::ma5;
+            // MA5 has no Phrase API: SPF always uses MA7, whatever engine is selected, and never falls back.
+            if(spf_) {
+                if(!smaf::engineAvailable(settings_.folder,smaf::Engine::ma7)) throw std::runtime_error("SPF playback requires the Yamaha MA7 libraries, which were not found in the configured MA7 folder");
+                engine=smaf::Engine::ma7;
+            }
+            else if(engine==smaf::Engine::automatic) engine=smaf::engineAvailable(settings_.folder,smaf::Engine::ma7)?smaf::Engine::ma7:smaf::Engine::ma5;
             try {startEngine(engine,abort,repeats);}
             catch(const exception_aborted&) {throw;}
             catch(const std::exception& first) {
                 bridge_.reset();abort.check();
+                if(spf_) throw;
                 // Automatic selection can recover from an unusable MA7 installation.
                 auto fallback=engine==smaf::Engine::ma5?smaf::Engine::ma7:smaf::Engine::ma5;
                 const auto& folder=fallback==smaf::Engine::ma5?settings_.ma5Folder:settings_.folder;
@@ -129,11 +137,13 @@ public:
         auto size=file_->get_size_ex(abort);
         if(size<12||size>64*1024*1024) throw exception_io_data("Invalid or oversized SMAF input (maximum 64 MiB)");
         data_.resize(static_cast<size_t>(size));file_->read_object(data_.data(),data_.size(),abort);
-        if(!memcmp(data_.data(),"MMMD",4)) codec_="SMAF";
+        bool container=false;
+        if(!memcmp(data_.data(),"MMMD",4)) {spf_=smaf::isSpf(data_);codec_=spf_?"SPF":"SMAF";container=true;}
         else if(!memcmp(data_.data(),"melo",4)) codec_="MLD";
         else if(!memcmp(data_.data(),"MThd",4)) codec_="MIDI";
         else throw exception_io_data("Unrecognized SMAF, MLD or MIDI header");
-        if((format==Format::mmf&&strcmp(codec_,"SMAF"))||(format==Format::mld&&strcmp(codec_,"MLD"))||(format==Format::midi&&strcmp(codec_,"MIDI"))) throw exception_io_unsupported_format();
+        // SPF shares the MMMD container with MMF: either extension accepts either content, and the contents decide the engine path.
+        if(((format==Format::mmf||format==Format::spf)&&!container)||(format==Format::mld&&strcmp(codec_,"MLD"))||(format==Format::midi&&strcmp(codec_,"MIDI"))) throw exception_io_unsupported_format();
         metadata_=smaf::readMetadata(data_);
         settings_=smaf::settings();start(abort,0);
         if(reason==input_open_info_read) recycle(bridge_);
@@ -189,11 +199,13 @@ public:
     static bool g_is_our_path(const char*,const char* ext) {
         if constexpr(format==Format::mmf) return !_stricmp(ext,"mmf");
         if constexpr(format==Format::mld) return !_stricmp(ext,"mld");
+        if constexpr(format==Format::spf) return !_stricmp(ext,"spf");
         return !_stricmp(ext,"mid")||!_stricmp(ext,"midi");
     }
-    static const char* g_get_name(){return format==Format::mmf?"Yamaha MMF decoder":format==Format::mld?"Yamaha MLD decoder":"Yamaha MIDI decoder";}
+    static const char* g_get_name(){return format==Format::mmf?"Yamaha MMF decoder":format==Format::mld?"Yamaha MLD decoder":format==Format::spf?"Yamaha SPF decoder":"Yamaha MIDI decoder";}
     static GUID g_get_guid(){
         if constexpr(format==Format::mld) return {0x66a884a5,0x2d78,0x4057,{0xb1,0x27,0x98,0x55,0xd7,0xd5,0x4c,0x23}};
+        if constexpr(format==Format::spf) return {0x7d76feaf,0xdafd,0x4421,{0xa6,0xbb,0x4f,0xfe,0x3e,0xac,0xbf,0xea}};
         if constexpr(format==Format::midi) return {0xc5745014,0xf0b2,0x417f,{0x91,0x9e,0xa0,0x37,0x11,0xbd,0x02,0x30}};
         return {0x78efc790,0x61e2,0x4ebe,{0x88,0x13,0x5f,0x4b,0xad,0x92,0x13,0xeb}};
     }
@@ -201,11 +213,12 @@ public:
 input_singletrack_factory_t<input_smaf<Format::mmf>> mmfFactory;
 input_singletrack_factory_t<input_smaf<Format::mld>> mldFactory;
 input_singletrack_factory_t<input_smaf<Format::midi>> midiFactory;
+input_singletrack_factory_t<input_smaf<Format::spf>> spfFactory;
 class file_types : public input_file_type {
 public:
-    unsigned get_count() override{return 3;}
-    bool get_name(unsigned index,pfc::string_base& out) override{out=index==0?"Yamaha SMAF (MMF)":index==1?"Yamaha MLD":"Yamaha MIDI";return index<3;}
-    bool get_mask(unsigned index,pfc::string_base& out) override{out=index==0?"*.MMF":index==1?"*.MLD":"*.MID;*.MIDI";return index<3;}
+    unsigned get_count() override{return 4;}
+    bool get_name(unsigned index,pfc::string_base& out) override{out=index==0?"Yamaha SMAF (MMF)":index==1?"Yamaha MLD":index==2?"Yamaha MIDI":"Yamaha SMAF Phrase (SPF)";return index<4;}
+    bool get_mask(unsigned index,pfc::string_base& out) override{out=index==0?"*.MMF":index==1?"*.MLD":index==2?"*.MID;*.MIDI":"*.SPF";return index<4;}
     bool is_associatable(unsigned) override{return true;}
 };
 service_factory_single_t<file_types> typeFactory;

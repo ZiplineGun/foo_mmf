@@ -16,7 +16,7 @@ $repo = (Get-Location).Path
 
 Append older-MA5 and newer-MA5 library folders to run both MA5 suites. The named fixture set expected by integration tests is listed in `tests/bridge_tests.cpp` and `tests/host_tests.cpp`. These tests are optional when those files are unavailable. Synthetic MIDI is created by the tests.
 
-Coverage includes nonzero PCM, warm/fresh consistency, concurrent decoders, exact/native seeking, volume and effects, repeat/EOF behavior, malformed inputs, cancellation, missing libraries and helper crashes. MA5 tests also check engine differences and unsupported formats. Sample-rate tests switch 48/44.1/48 kHz in one helper, compare exact seeks and song duration, measure synthetic MIDI pitch and check that silent tail removal preserves audible effects.
+An optional SPF suite runs when `music1_1.spf` (any SPF) is in the fixture folder: open at both rates, nonzero PCM and declared length, reopen determinism, SPF/MMF/SPF mode switching in one hot helper, ignored tempo/transposition, volume zero and monotonic volume, exact and native seeks, one extra repeat, truncated input and (with an MA5 folder) rejection on MA5. Its expectations are structural and have not yet been run against real libraries. Coverage includes nonzero PCM, warm/fresh consistency, concurrent decoders, exact/native seeking, volume and effects, repeat/EOF behavior, malformed inputs, cancellation, missing libraries and helper crashes. MA5 tests also check engine differences and unsupported formats. Sample-rate tests switch 48/44.1/48 kHz in one helper, compare exact seeks and song duration, measure synthetic MIDI pitch and check that silent tail removal preserves audible effects.
 
 ## Real foobar hosts
 
@@ -36,7 +36,7 @@ Add `-CapturePcm` to the standard suite to repeat the volume-control comparisons
 
 ## Metadata tests
 
-Build `metadata_tests.vcxproj` for x64 and Win32. Run the executable without arguments for synthetic CNTI/OPDA encoding, escaping, malformed/truncated input and mutation tests. An optional folder argument, such as `"test files\meta"`, checks supplied metadata fixtures. These tests need no Yamaha DLLs or foobar installation.
+`tests/spf_checks.hpp` (SPF content detection, truncated/oversized chunks, mutation fuzzing and the Phrase volume mapping) has no Windows dependency and also runs from `metadata_tests`. Build `metadata_tests.vcxproj` for x64 and Win32. Run the executable without arguments for synthetic CNTI/OPDA encoding, escaping, malformed/truncated input and mutation tests. An optional folder argument, such as `"test files\meta"`, checks supplied metadata fixtures. These tests need no Yamaha DLLs or foobar installation.
 
 The text layout and tag mapping follow Yamaha's [SMAF Specification 3.05, sections 4.2 and 4.3](https://img.atwiki.jp/mmfuta/attach/19/78/SMAF3.05.pdf). CNTI carries escaped comma-delimited options; OPDA Dch fields have 16-bit byte lengths. Dch text overrides earlier CNTI values. Unicode defaults to big endian unless a BOM selects otherwise. Windows converts the supported legacy encodings; unknown encodings, TCVN-6 and binary Dch data are omitted. Category remains CATEGORY rather than being guessed as a musical genre.
 
@@ -75,6 +75,8 @@ Build `smaf_audio_tests.vcxproj` for synthetic graphics-filter tests; an optiona
 - MIDI effects tests cover all four reverb/chorus combinations, running status, controller/system resets, source preservation and restoration across warm opens.
 - Playback controls use native spin buttons, labelled edit buddies and a 350 ms debounce. Enter, Escape and Close flush valid pending edits. Conversion must not inherit temporary playback controls.
 - Normal loading is quiet. Timeout diagnostics include the current filename, phase, helper PID and elapsed time. Recovery remains bounded, with cancellation bypassing retries.
+
+- SPF: the `Mapi_Phrase_*` sequencing was validated by driving the real `smaf::Yamaha` class against a simulated MA7 DLL (under Wine) that enforces the documented rules: exclusive modes, state machine, `SetData` borrowing the buffer, `Seek` only while stopped, 10 ms block multiples, `GetPosition` failing or returning the length after the end, and `SetData` accepting only flag 0. It covered both rates, repeats with and without fade, native seeks including into a repeat, SPF/MMF switching, a rejected truncated SPF and closing mid-playback. This proves call order and bookkeeping only, not audio. Listen to real SPF output, check the length against `smaf2wav --info`, and confirm the volume mapping before release. Ask whether `Phrase_Play`'s repeat argument is a count if a future need arises (open question in smaf2wav's API notes).
 
 ## Release validation
 

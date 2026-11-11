@@ -1,6 +1,7 @@
 #include "yamaha.hpp"
 #include "midi.hpp"
 #include "smaf_audio.hpp"
+#include "spf.hpp"
 #include "ma5_clock.hpp"
 #include <algorithm>
 #include <array>
@@ -43,7 +44,7 @@ Yamaha::Yamaha(const std::wstring& directory,Engine engine,Progress progress,uns
     if(engine_==Engine::ma5) ma5Clock_=std::make_unique<Ma5Clock>(mms_);
     initialize();
 }
-void Yamaha::initialize() {
+void Yamaha::initialize(bool phrase) {
     progress(LoadStage::initialize);
     // 72-byte offline emulator configuration.
     std::array<uint32_t,18> config{};
@@ -67,7 +68,9 @@ void Yamaha::initialize() {
     emulator_=true;
     checked("Initialize",api<Call>("Mapi_Initialize")()); initialized_=true;
     resetDevice();
-    checked("SetMode",api<One>("Mapi_SetMode")(1));
+    // Melody (MMF/MLD/MIDI) and Phrase (SPF) are exclusive Mapi modes; the engine is
+    // re-initialized whenever the next song needs the other one.
+    checked("SetMode",api<One>("Mapi_SetMode")(phrase?2:1));phraseMode_=phrase;
     control_=api<Control>("Mapi_Melody_Control");
     generate_=api<int(__cdecl*)(void*,unsigned)>("Mapi_EmuGenerate");
 }
@@ -84,18 +87,22 @@ void Yamaha::resetDevice() {
     }
 }
 void Yamaha::open(std::vector<uint8_t> data,unsigned repeats,unsigned fadeMs,int volume,bool enableReverb,bool enableChorus) {
-    bool reset=handle_!=0;
+    // SPF is recognized from its contents and needs the MA7 Phrase API; MA5 has no equivalent.
+    const bool spf=isSpf(data);
+    if(spf&&engine_!=Engine::ma7) throw std::runtime_error("SPF playback requires the Yamaha MA7 libraries");
+    bool reset=handle_!=0||phrase_;
     progress(LoadStage::releaseSong);
     closeSong();
-    if(reset) {
+    if(reset||phraseMode_!=spf) {
         progress(LoadStage::resetEngine);
         terminate();
-        initialize(); // Retain the process and loaded DLLs; clear all chip/effect state.
+        initialize(spf); // Retain the process and loaded DLLs; clear all chip/effect state.
     }
     if(data.empty()||data.size()>maxFileBytes||repeats>254||fadeMs>30000) throw std::runtime_error("Invalid song or playback settings");
     data_=enableReverb&&enableChorus?std::move(data):midiEffects(data,enableReverb,enableChorus); repeats_=repeats; repeatsLeft_=repeats; fadeMs_=fadeMs;
     if(engine_==Engine::ma5) data_=audioOnlySmaf(std::move(data_));
     tailFrames_=quietFrames_=ma5PollBlocks_=0;ma5Position_=0;renderedTenthsMs_=0;lastPosition_=-1; ending_=finished_=false;
+    if(spf) {openPhrase(volume);return;}
     using Load=int(__cdecl*)(const void*,unsigned,unsigned,unsigned);
     progress(LoadStage::load);
     handle_=engine_==Engine::ma5?
@@ -121,6 +128,34 @@ void Yamaha::open(std::vector<uint8_t> data,unsigned repeats,unsigned fadeMs,int
     checked("Start",melodyApi<One>("Start")(handle_)); started_=true;
     if(ma5Clock_) ma5Clock_->freeze();
 }
+void Yamaha::openPhrase(int volume) {
+    constexpr int slot=0;
+    const unsigned size=static_cast<unsigned>(data_.size());
+    progress(LoadStage::load);
+    checked("Phrase CheckData",api<int(__cdecl*)(const void*,unsigned)>("Mapi_Phrase_CheckData")(data_.data(),size));
+    auto setData=api<int(__cdecl*)(int,const void*,unsigned,int)>("Mapi_Phrase_SetData");
+    // SetData keeps the pointer, it does not copy: data_ must stay untouched until RemoveData (closeSong).
+    // The meaning of the flag is not fully known; both values produced identical audio, so retry with the other.
+    int result=setData(slot,data_.data(),size,1);
+    if(result<0) result=setData(slot,data_.data(),size,0);
+    checked("Phrase SetData",result);
+    phrase_=true;opened_=true;
+    progress(LoadStage::length);
+    length_=checked("Phrase Length",api<One>("Mapi_Phrase_GetLength")(slot));
+    if(!length_||length_>24*60*60*1000) throw std::runtime_error("Invalid Yamaha song length");
+    progress(LoadStage::controls);controls(100,0,volume);
+    progress(LoadStage::start);
+    // Repeat argument 1 = play once; any other value makes the DLL loop. Whole-song repeats are done by render().
+    checked("Phrase Play",api<int(__cdecl*)(int,int)>("Mapi_Phrase_Play")(slot,1));started_=true;
+}
+void Yamaha::playPhrase(unsigned position) {
+    constexpr int slot=0;
+    // Stop fails harmlessly when the phrase already finished (state 2); Seek only works while stopped.
+    api<One>("Mapi_Phrase_Stop")(slot);started_=false;
+    checked("Phrase Seek",api<int(__cdecl*)(int,int)>("Mapi_Phrase_Seek")(slot,static_cast<int>(position)));
+    controls(tempo_,transpose_,volume_);
+    checked("Phrase Play",api<int(__cdecl*)(int,int)>("Mapi_Phrase_Play")(slot,1));started_=true;
+}
 int Yamaha::songControl(unsigned command,void* value) {
     if(engine_!=Engine::ma5) return control_(handle_,command,value);
     unsigned mapped=command;
@@ -135,6 +170,13 @@ int Yamaha::songControl(unsigned command,void* value) {
 }
 void Yamaha::controls(int tempo,int transpose,int volume) {
     if(tempo<70||tempo>130||transpose < -12||transpose>12) throw std::runtime_error("Tempo or transposition out of range");
+    if(phrase_) {
+        // The Phrase API has no tempo or transposition: they are accepted and ignored, and the
+        // nominal clock stays at 100 percent. Only the volume reaches the synthesizer.
+        if(volume<0||volume>127) throw std::runtime_error("Yamaha volume out of range");
+        api<void(__cdecl*)(int,int)>("Mapi_Phrase_SetVolume")(0,phraseVolume(volume));
+        volume_=volume;return;
+    }
     checked("Tempo",songControl(0x11110029,&tempo));
     checked("Transpose",songControl(0x11110030,&transpose));
     if(volume<0||volume>127) throw std::runtime_error("Yamaha volume out of range");
@@ -145,19 +187,29 @@ void Yamaha::seek(uint64_t milliseconds) {
     if(ma5Clock_) ma5Clock_->realtime();
     heldTail_.clear();readyAudio_.clear();
     if(milliseconds>=uint64_t(length_)*(repeats_+1)) {finished_=true;return;}
-    int stopped=melodyApi<One>("Stop")(handle_);
-    if(stopped!=-8) checked("SeekStop",stopped);started_=false;
     repeatsLeft_=repeats_-static_cast<unsigned>(std::min(uint64_t(repeats_),milliseconds/length_));
     const unsigned position=static_cast<unsigned>(milliseconds%length_);
-    checked("Seek",melodyApi<int(__cdecl*)(int,unsigned)>("Seek")(handle_,position));
-    checked("SeekReady",melodyApi<int(__cdecl*)(int,int)>("WaitReady")(handle_,-1));
-    controls(tempo_,transpose_,volume_);
-    checked("SeekStart",melodyApi<One>("Start")(handle_)); started_=true;
+    if(phrase_) playPhrase(position);
+    else {
+        int stopped=melodyApi<One>("Stop")(handle_);
+        if(stopped!=-8) checked("SeekStop",stopped);started_=false;
+        checked("Seek",melodyApi<int(__cdecl*)(int,unsigned)>("Seek")(handle_,position));
+        checked("SeekReady",melodyApi<int(__cdecl*)(int,int)>("WaitReady")(handle_,-1));
+        controls(tempo_,transpose_,volume_);
+        checked("SeekStart",melodyApi<One>("Start")(handle_)); started_=true;
+    }
     if(ma5Clock_) ma5Clock_->freeze();
     ma5Position_=position;renderedTenthsMs_=uint64_t(position)*10;ma5PollBlocks_=0;lastPosition_=-1;
     ending_=finished_=false;tailFrames_=quietFrames_=0;
 }
-int Yamaha::positionMs() {return checked("Position",songControl(0x1111002b,nullptr));}
+int Yamaha::positionMs() {
+    if(phrase_) {
+        // Phrase position is valid only while playing and can fail once the phrase has ended.
+        const int position=api<One>("Mapi_Phrase_GetPosition")(0);
+        return position<0?std::max(lastPosition_,0):position;
+    }
+    return checked("Position",songControl(0x1111002b,nullptr));
+}
 unsigned Yamaha::read(float* interleaved) {
     for(;;) {
         if(!readyAudio_.empty()) {
@@ -228,12 +280,15 @@ unsigned Yamaha::render(float* interleaved) {
     if(ending_) {
         if(repeatsLeft_) {
             if(ma5Clock_) ma5Clock_->realtime();
-            int stopped=melodyApi<One>("Stop")(handle_);
-            if(stopped!=-8) checked("RepeatStop",stopped);
-            checked("RepeatSeek",melodyApi<int(__cdecl*)(int,int)>("Seek")(handle_,0));
-            checked("RepeatReady",melodyApi<int(__cdecl*)(int,int)>("WaitReady")(handle_,-1));
-            controls(tempo_,transpose_,volume_);
-            checked("RepeatStart",melodyApi<One>("Start")(handle_));
+            if(phrase_) playPhrase(0);
+            else {
+                int stopped=melodyApi<One>("Stop")(handle_);
+                if(stopped!=-8) checked("RepeatStop",stopped);
+                checked("RepeatSeek",melodyApi<int(__cdecl*)(int,int)>("Seek")(handle_,0));
+                checked("RepeatReady",melodyApi<int(__cdecl*)(int,int)>("WaitReady")(handle_,-1));
+                controls(tempo_,transpose_,volume_);
+                checked("RepeatStart",melodyApi<One>("Start")(handle_));
+            }
             if(ma5Clock_) ma5Clock_->freeze();
             ma5Position_=0;renderedTenthsMs_=0;ma5PollBlocks_=0;lastPosition_=-1;
             --repeatsLeft_; ending_=false; return frames_;
@@ -254,9 +309,16 @@ unsigned Yamaha::render(float* interleaved) {
 void Yamaha::closeSong() {
     if(ma5Clock_) ma5Clock_->realtime();
     heldTail_.clear();readyAudio_.clear();
-    if(started_) {int result=melodyApi<One>("Stop")(handle_);if(result!=-8) checked("Stop",result);started_=false;}
-    if(opened_) {checked("Close",melodyApi<One>("Close")(handle_));opened_=false;}
-    if(handle_) {checked("Unload",melodyApi<One>("Unload")(handle_));handle_=0;}
+    if(phrase_) {
+        if(started_) {api<One>("Mapi_Phrase_Stop")(0);started_=false;} // fails harmlessly if already finished
+        // RemoveData releases the buffer SetData borrowed; data_ is cleared only afterwards.
+        if(opened_) {checked("Phrase RemoveData",api<One>("Mapi_Phrase_RemoveData")(0));opened_=false;}
+        phrase_=false;
+    } else {
+        if(started_) {int result=melodyApi<One>("Stop")(handle_);if(result!=-8) checked("Stop",result);started_=false;}
+        if(opened_) {checked("Close",melodyApi<One>("Close")(handle_));opened_=false;}
+        if(handle_) {checked("Unload",melodyApi<One>("Unload")(handle_));handle_=0;}
+    }
     data_.clear();
 }
 void Yamaha::terminate() {
@@ -271,9 +333,14 @@ void Yamaha::terminate() {
 void Yamaha::close() noexcept {
     if(ma5Clock_) ma5Clock_->realtime();
     try {
-        if(started_) melodyApi<One>("Stop")(handle_);
-        if(opened_) melodyApi<One>("Close")(handle_);
-        if(handle_) melodyApi<One>("Unload")(handle_);
+        if(phrase_) {
+            if(started_) api<One>("Mapi_Phrase_Stop")(0);
+            if(opened_) api<One>("Mapi_Phrase_RemoveData")(0);
+        } else {
+            if(started_) melodyApi<One>("Stop")(handle_);
+            if(opened_) melodyApi<One>("Close")(handle_);
+            if(handle_) melodyApi<One>("Unload")(handle_);
+        }
         terminate();
     } catch(...) {}
     ma5Clock_.reset();

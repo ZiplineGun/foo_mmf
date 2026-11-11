@@ -35,6 +35,8 @@ public:
     unsigned rate() const {return rate_;}
     unsigned blockSize() const {return frames_;}
     int positionMs();
+    // True when the loaded song is an SPF played through the Phrase API (MA7 only).
+    bool isPhrase() const {return phrase_;}
 private:
     using Call = int(__cdecl*)();
     using One = int(__cdecl*)(int);
@@ -48,6 +50,9 @@ private:
     std::unique_ptr<Ma5Clock> ma5Clock_;
     DLL_DIRECTORY_COOKIE directoryCookie_{};
     bool emulator_{}, initialized_{}, opened_{}, started_{};
+    // SPF uses Mapi_Phrase_* in Mapi_SetMode(2); everything else uses Mapi_SetMode(1).
+    // phraseMode_ is the mode the engine is initialized in, phrase_ the loaded song's kind.
+    bool phraseMode_{}, phrase_{};
     int handle_{};
     unsigned length_{}, repeats_{}, fadeMs_{}, tailFrames_{}, quietFrames_{};
     unsigned repeatsLeft_{};
@@ -69,7 +74,9 @@ private:
     void terminate();
     void close() noexcept;
     void resetDevice();
-    void initialize();
+    void initialize(bool phrase=false);
+    void openPhrase(int volume);
+    void playPhrase(unsigned position);
     unsigned render(float* interleaved);
 };
 std::vector<uint8_t> readFile(const wchar_t* path);

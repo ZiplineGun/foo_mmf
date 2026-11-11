@@ -1,5 +1,6 @@
 #include "../src/bridge.hpp"
 #include "../src/midi.hpp"
+#include "../src/spf.hpp"
 #include <tlhelp32.h>
 #include <algorithm>
 #include <cmath>
@@ -127,6 +128,54 @@ static void testMa5(const std::wstring& helper,const std::wstring& folder,const 
     require(!bridge.healthy(),"Cancelled MA5 helper was retained");
     std::printf("PASS MA5 PCM, engine difference, warm reuse, controls, exact/native seek, repeats/EOF, unsupported formats and cancellation\n");fflush(stdout);
 }
+// SPF (SMAF Phrase) is MA7-only. The fixture is optional and not redistributed: any SPF named
+// music1_1.spf in the fixture folder enables this suite. Expectations are structural (they do not
+// assume a particular song), so another SPF with the same name works as well.
+static void testSpf(const std::wstring& helper,const std::wstring& folder,const std::wstring& fixtures,const std::wstring& ma5Folder) {
+    const std::wstring path=fixtures+L"\\music1_1.spf";
+    if(GetFileAttributesW(path.c_str())==INVALID_FILE_ATTRIBUTES) {std::puts("SKIP SPF tests (music1_1.spf not found in the fixture folder)");return;}
+    auto check=[]{};auto spf=readFile(path),mmf=readFile(fixtures+L"\\MarsMine.mmf");
+    require(smaf::isSpf(spf)&&!smaf::isSpf(mmf),"SPF content detection disagrees with the fixtures");
+    for(unsigned rate:{48000u,44100u}) {
+        smaf::Bridge bridge(helper,folder,spf,0,5000,check,64,true,smaf::Engine::ma7,true,rate);auto pid=bridge.processId();
+        require(bridge.rate()==rate&&bridge.lengthMs()>0,"SPF open reported no length/rate");
+        auto pcm=render(bridge);float peak=0;
+        for(float v:pcm) {require(std::isfinite(v)&&std::abs(v)<=1,"Invalid SPF PCM sample");peak=std::max(peak,std::abs(v));}
+        double seconds=double(pcm.size()/2)/rate;
+        require(peak>0.001f&&seconds>=double(bridge.lengthMs())/1000-0.02,"SPF is silent or ended before its declared length");
+        std::printf("PASS SPF %u Hz: %u ms declared, %.3f s rendered, peak %.4f\n",rate,bridge.lengthMs(),seconds,peak);
+        // Hot helper: melody <-> phrase mode switches must reinitialize the engine and leak nothing.
+        bridge.open(folder,spf,0,5000,check,64,true,true,rate);require(render(bridge)==pcm,"Reopened SPF differs from its first render");
+        bridge.open(folder,mmf,0,5000,check,64,true,true,rate);
+        smaf::Bridge freshMmf(helper,folder,mmf,0,5000,check,64,true,smaf::Engine::ma7,true,rate);
+        for(unsigned n=0;n<100;++n) require(bridge.read(100,0,check)==freshMmf.read(100,0,check),"SPF state leaked into the next MMF");
+        bridge.open(folder,spf,0,5000,check,64,true,true,rate);
+        for(unsigned n=0;n<100;++n) require(!bridge.read(100,0,check).empty(),"SPF after MMF produced no audio");
+        require(bridge.processId()==pid,"SPF/MMF switching restarted the helper");
+        // Tempo and transposition do not exist for phrases; live controls must be accepted and ignored.
+        bridge.open(folder,spf,0,5000,check,64,true,true,rate);auto plain=bridge.read(100,0,check);
+        bridge.open(folder,spf,0,5000,check,64,true,true,rate);require(bridge.read(70,-12,check)==plain,"SPF reacted to tempo/transposition");
+        // Volume reaches the phrase slot: zero is silent, a lower value is quieter.
+        auto peakAt=[&](int volume){bridge.open(folder,spf,0,5000,check,volume,true,true,rate);float p=0;for(float v:render(bridge,volume)) p=std::max(p,std::abs(v));return p;};
+        require(peakAt(0)<0.002f,"SPF volume zero is not silent");
+        require(peakAt(32)<peakAt(64),"SPF volume 32 is not quieter than 64");
+        // Exact and native seeks.
+        bridge.open(folder,spf,0,5000,check,64,true,true,rate);
+        unsigned offset=rate*1000/1000;bool eof=false;auto remainder=bridge.discard(offset,check,64,eof);
+        require(!eof&&std::equal(remainder.begin(),remainder.end(),pcm.begin()+offset*2),"SPF exact seek differs");
+        bridge.seek(bridge.lengthMs()*3/4,check);require(!bridge.read(100,0,check).empty(),"SPF native seek produced no audio");
+        bridge.seek(999999,check);require(bridge.read(100,0,check).empty(),"SPF seek beyond EOF failed");
+        // One extra whole-song repeat, no fade: about two passes.
+        bridge.open(folder,spf,1,0,check,64,true,true,rate);auto twice=render(bridge);
+        require(double(twice.size()/2)/rate>=2*double(bridge.lengthMs())/1000-0.03,"SPF repeat did not play a second pass");
+        bridge.seek(bridge.lengthMs()+500,check);require(!bridge.read(100,0,check).empty(),"SPF native seek into the repeat failed");
+        fails([&]{bridge.seek(0,[]{throw std::runtime_error("cancelled seek");});},"cancel during SPF seek");
+    }
+    // A truncated SPF must be rejected cleanly (MA7 throws, the helper process is dropped).
+    {smaf::Bridge bridge(helper,folder,spf,0,5000,check);auto broken=spf;broken.resize(broken.size()/2);
+     fails([&]{bridge.open(folder,broken,0,5000,check);},"truncated SPF");}
+    if(!ma5Folder.empty()) fails([&]{smaf::Bridge bridge(helper,ma5Folder,spf,0,5000,check,64,true,smaf::Engine::ma5);},"SPF on MA5 (MA7 only)");
+}
 int wmain(int argc,wchar_t** argv) {
     if(argc!=4&&argc!=6) {std::puts("Usage: bridge_tests helper-exe MA7-folder fixture-folder [older-MA5-folder newer-MA5-folder]");return 2;}
     try {
@@ -250,6 +299,7 @@ int wmain(int argc,wchar_t** argv) {
             fails([&]{bridge.read(100,0,noAbort);},"helper crash");
         }
         testRates(helper,folder,fixtures,smaf::Engine::ma7);
+        testSpf(helper,folder,fixtures,argc==6?std::wstring(argv[5]):std::wstring());
         if(argc==6) {testMa5(helper,argv[4],folder,fixtures);testRates(helper,argv[4],fixtures,smaf::Engine::ma5);testMa5(helper,argv[5],folder,fixtures);testRates(helper,argv[5],fixtures,smaf::Engine::ma5);}
         std::printf("PASS all bridge tests (%zu-bit client)\n",sizeof(void*)*8);return 0;
     } catch(const std::exception& e) {std::fprintf(stderr,"FAIL: %s\n",e.what());return 1;}
